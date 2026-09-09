@@ -70,6 +70,10 @@
         <button id="new-datum" class="mini" title="Enter a position to search for">Datum…</button>
       </h2>
       <ul id="contacts"></ul>
+      <!-- Only the classes this project actually has. A fixed key of ten
+           colours would be chrome; four that are on the chart in front of you
+           is a legend. -->
+      <div id="contact-legend" class="c-legend"></div>
     </section>
   </aside>
 
@@ -144,8 +148,8 @@
            patterns of one, because at survey spacing the lines sit a few pixels
            apart and a dash pattern is not a distinction the eye can make. -->
       <div class="pl-sub pl-layers">
-        <span class="pl-key line" title="Recording. Always drawn.">Line</span>
-        <label class="check pl-key run"><input type="checkbox" id="pl-L-run" checked> Run-in</label>
+        <span class="pl-key line" title="The survey line: the box, edge to edge. Always drawn.">Line</span>
+        <label class="check pl-key run" title="Getting on and off the line: outside the box at both ends, and no data claimed on it"><input type="checkbox" id="pl-L-run" checked> Run-in / out</label>
         <label class="check pl-key turn"><input type="checkbox" id="pl-L-turn" checked> Turns</label>
         <label class="check pl-key cov"><input type="checkbox" id="pl-L-cov" checked> Coverage</label>
         <label class="check"><input type="checkbox" id="pl-L-num" checked> Numbers</label>
@@ -229,11 +233,16 @@
       </div>
       <div class="cd-fields">
         <label class="field wide"><span>Name</span><input id="cd-name" autocomplete="off"></label>
-        <label class="field wide"><span>Class</span>
+        <label class="field wide has-swatch"><span>Class</span>
           <input id="cd-class" list="classes" autocomplete="off">
+          <!-- The class is what colours the pin, so the answer is shown here
+               as it is typed rather than found out by closing the dialog. -->
+          <span id="cd-swatch" class="cd-swatch"></span>
           <datalist id="classes">
-            <option>debris</option><option>wreck</option><option>boulder</option>
-            <option>pipeline</option><option>cable</option><option>scour</option>
+            <option>mine</option><option>mine-like (MILCO)</option><option>NOMBO</option>
+            <option>UXO</option><option>debris</option><option>wreck</option>
+            <option>boulder</option><option>pipeline</option><option>cable</option>
+            <option>anchor</option><option>net</option><option>scour</option>
             <option>area of interest</option><option>seabed feature</option>
           </datalist>
         </label>
@@ -325,11 +334,25 @@
         <p class="hint">Waypoints steer the <b>GPS antenna</b>, and the fish is
         <b id="pl-offset">—</b> astern of it. Every line is stretched by that much
         so the fish, not the boat, crosses the box.</p>
-        <label class="field wide"><span>Run-in before data</span>
-          <input type="number" id="pl-runin" min="0" max="1000" step="10"><em>m</em></label>
-        <p class="hint">A towed body needs about three cable lengths to settle.
-        Behind a turn this rig is still out by 5.4 m at 25 m, 1.8 m at 100 m and
-        0.7 m past 400 m — so this is what buys a placement worth trusting.</p>
+        <!-- Two settings, not one. They buy different things and the boat pays
+             for them at opposite ends of the line. -->
+        <div class="two">
+          <label class="field"><span>Run-in before data</span>
+            <input type="number" id="pl-runin" min="0" max="1000" step="10"><em>metres</em></label>
+          <label class="field"><span>Run-out after data</span>
+            <input type="number" id="pl-runout" min="0" max="1000" step="10"><em>metres</em></label>
+        </div>
+        <p class="hint">Both are legs of line either side of the box, drawn and
+        steered as asked. The layback makes them cost different things.</p>
+        <p class="hint"><b>Run-in</b> buys settling. A towed body needs about
+        three cable lengths behind a turn — this rig is still out by 5.4 m at
+        25 m, 1.8 m at 100 m and 0.7 m past 400 m — and the fish gets the run-in
+        <em>plus</em> the offset, because recording only starts once it has
+        caught up to the edge: <b id="pl-settle">—</b> of straight running.</p>
+        <p class="hint"><b>Run-out</b> buys coverage, and that is why it has a
+        floor the run-in has not: the fish is astern, so a leg that stops at the
+        box edge leaves the fish short of it. Right now
+        <b id="pl-cover">—</b>.</p>
         <div class="two">
           <label class="field"><span>Survey speed</span><input type="number" id="pl-speed" min="1" max="12" step="0.1"><em>kn</em></label>
           <label class="field"><span>Turn radius</span><input type="number" id="pl-turn" min="10" max="600" step="5"><em>m</em></label>

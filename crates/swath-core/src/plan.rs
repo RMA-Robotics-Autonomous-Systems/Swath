@@ -8,12 +8,29 @@
 //! Three things in it are easy to get wrong, so they are stated once here.
 //!
 //! **The waypoints steer the antenna, not the fish.** The GPS is at the bow and
-//! the fish is `gps_to_towpoint_m + layback_m` astern of it. A line that runs
-//! from one edge of the box to the other puts the *boat* over the box and the
-//! fish short of it at both ends. So each line is stretched: the boat carries
-//! on past the far edge by the full offset, and starts before the near edge by
-//! the run-in less that offset. The asymmetry is real and it is not a rounding
-//! choice -- the run-out is exactly the offset, and nothing else.
+//! the fish is `gps_to_towpoint_m + layback_m` astern of it -- 54 m on the
+//! standard rig. A line drawn from one edge of the box to the other therefore
+//! puts the *boat* over the box and the fish short of it at both ends.
+//!
+//! The run-in and the run-out are the legs either side of the box, drawn and
+//! steered exactly as asked for: 50 m of run-in is 50 m of line before the box
+//! edge. What the layback does to them is not symmetrical, and this is the one
+//! thing worth knowing about the whole arrangement:
+//!
+//! ```text
+//!   the near edge is free      recording starts when the fish reaches it,
+//!                              which is `offset` into the leg -- the boat
+//!                              is already inside the box by then
+//!   the far edge is not        the fish is `offset` behind, so the leg has
+//!                              to carry on `offset` past the box or the
+//!                              fish never gets there
+//! ```
+//!
+//! So a run-in shorter than the offset costs settling, and a run-out shorter
+//! than the offset costs *coverage*: the fish is `offset - run_out` short of
+//! the far edge when the wheel goes over, and that strip of the box is not
+//! surveyed by that line. The plan reports it as `fish_short_m` and draws it,
+//! rather than quietly claiming the box.
 //!
 //! **The run-in is not padding.** A towed body needs about three cable lengths
 //! to settle behind a turn, and until it has, the constant-offset placement in
@@ -123,14 +140,34 @@ impl Sonar {
     }
 }
 
+/// Defaulted field by field, so a project written before a setting existed
+/// still opens: a missing one is taken from [`Rig::default`] rather than
+/// refusing the whole plan -- and with it the project it is stored in.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Rig {
     /// Fish astern of the tow point, metres. Defaults to `NavConfig`'s.
     pub layback_m: f64,
     /// Antenna to tow point, metres, positive aft. The GPS is at the bow.
     pub gps_to_towpoint_m: f64,
-    /// Straight running before the data is trusted, metres.
+    /// The leg before the box, metres. Drawn and steered as asked: 50 m here
+    /// is 50 m of line ahead of the near edge.
+    ///
+    /// It buys settling. A towed body needs about three cable lengths behind a
+    /// turn before the constant-offset placement in `nav` is worth trusting,
+    /// and the fish gets this plus the offset -- it is already `offset` behind
+    /// when the boat crosses the edge, and recording does not start until it
+    /// catches up to the edge itself.
     pub run_in_m: f64,
+    /// The leg after the box, metres. Drawn and steered as asked, like the
+    /// run-in.
+    ///
+    /// It buys coverage, which is why it has a floor the run-in does not: the
+    /// fish is `offset_m` astern, so anything less than that and the wheel
+    /// goes over before the fish has reached the far edge. The default is 60,
+    /// which clears the 54 m of the standard rig; change the layback and the
+    /// plan says whether this still covers it.
+    pub run_out_m: f64,
     pub speed_kn: f64,
     pub turn_radius_m: f64,
     /// Seconds lost per turn beyond the distance -- slowing, settling, talking.
@@ -143,6 +180,7 @@ impl Default for Rig {
             layback_m: 44.0,
             gps_to_towpoint_m: 10.0,
             run_in_m: 150.0,
+            run_out_m: 60.0,
             speed_kn: 3.5,
             turn_radius_m: 40.0,
             turn_allowance_s: 90.0,
@@ -231,8 +269,11 @@ pub struct Run {
     pub x: f64,
     /// +1 along the plan azimuth, -1 against it.
     pub dir: f64,
-    /// Along-track positions of the antenna: where it starts, where recording
-    /// starts and stops, and where it ends.
+    /// Along-track positions of the antenna: where the leg starts, where
+    /// recording starts and stops, and where the leg ends and the turn begins.
+    /// Recording stops when the fish reaches the far edge or when the leg ends,
+    /// whichever comes first -- they are the same point when the run-out is
+    /// exactly the offset.
     pub a_start: f64,
     pub a_on: f64,
     pub a_off: f64,
@@ -323,6 +364,13 @@ pub struct Plan {
     /// widest of them reaches.
     pub teardrops: usize,
     pub overshoot_m: f64,
+    /// How far short of the far edge the fish is when the leg ends, metres.
+    ///
+    /// Zero when the run-out clears the layback, which is the only state worth
+    /// sailing. Anything else is box that the line crosses and does not
+    /// survey, at the far end of every line -- and since the direction
+    /// alternates, at both ends of the box.
+    pub fish_short_m: f64,
 }
 
 fn centroid(targets: &[Target]) -> (f64, f64) {
@@ -401,7 +449,12 @@ pub fn solve(spec: &PlanSpec, targets: &[Target], az_deg: f64) -> Option<Plan> {
     }
 
     let off = spec.rig.offset_m();
-    let run_in = spec.rig.run_in_m;
+    let run_in = spec.rig.run_in_m.max(0.0);
+    let run_out = spec.rig.run_out_m.max(0.0);
+    // What the layback costs at the far edge. The leg ends `run_out` past the
+    // box, and the fish is `off` behind the boat, so this much of the box goes
+    // by after the wheel has gone over.
+    let fish_short = (off - run_out).max(0.0);
     let runs: Vec<Run> = order
         .iter()
         .enumerate()
@@ -412,12 +465,12 @@ pub fn solve(spec: &PlanSpec, targets: &[Target], az_deg: f64) -> Option<Plan> {
                 line: li,
                 x: lines_x[li],
                 dir,
-                a_start: fs + dir * (off - run_in),
+                a_start: fs - dir * run_in,
                 a_on: fs + dir * off,
-                a_off: fe + dir * off,
-                a_end: fe + dir * off,
+                a_off: fe + dir * off.min(run_out),
+                a_end: fe + dir * run_out,
                 heading_deg: if dir > 0.0 { az } else { (az + 180.0).rem_euclid(360.0) },
-                length_m: (a1 - a0) + run_in,
+                length_m: (a1 - a0) + run_in + run_out,
             }
         })
         .collect();
@@ -505,6 +558,7 @@ pub fn solve(spec: &PlanSpec, targets: &[Target], az_deg: f64) -> Option<Plan> {
         seconds,
         teardrops,
         overshoot_m: overshoot.max(0.0),
+        fish_short_m: fish_short,
     };
     analyse(&mut plan, &pts);
     Some(plan)
@@ -517,6 +571,12 @@ fn passes(lines_x: &[f64], nadir: f64, range: f64, x: f64) -> usize {
 
 /// Coverage is exact in one dimension: every line spans the same along-track
 /// extent, so what happens across track happens everywhere in the box.
+///
+/// That holds while the fish crosses the whole box, which is what a run-out of
+/// at least the offset buys. Short of that these figures describe the part of
+/// the box every line does cross, and `fish_short_m` is the rest of the answer
+/// -- reported and drawn separately rather than folded into a percentage that
+/// would then mean two things at once.
 fn analyse(plan: &mut Plan, pts: &[(&Target, f64, f64)]) {
     const N: usize = 1400;
     let dx = (plan.x1 - plan.x0) / (N as f64 - 1.0);
@@ -746,6 +806,7 @@ impl Plan {
             format!("layback {:.0} m", spec.rig.layback_m),
             format!("GPS to tow point {:.0} m", spec.rig.gps_to_towpoint_m),
             format!("run-in {:.0} m", spec.rig.run_in_m),
+            format!("run-out {:.0} m", spec.rig.run_out_m),
             format!("{:.1} kn", spec.rig.speed_kn),
             format!("turn radius {:.0} m", spec.rig.turn_radius_m),
             format!("{} lines", self.lines),
@@ -775,10 +836,11 @@ impl Plan {
         let mut g = Gpx {
             name: if opts.name.is_empty() { self.default_name() } else { opts.name.clone() },
             desc: format!(
-                "{}. Waypoints steer the GPS antenna; the fish is {:.0} m astern, and each line is extended by that plus a {:.0} m run-in so the fish, not the boat, crosses the box. Recording starts at the A point of each line. No data is claimed in a turn.",
+                "{}. Waypoints steer the GPS antenna; the fish is {:.0} m astern. Each line is stretched by that offset so the fish, not the boat, crosses the box, and by {:.0} m of run-in before the near edge and {:.0} m of run-out past the far one on top of it. Recording starts at the A point of each line and stops at the E point. No data is claimed in a turn.",
                 self.digest(spec),
                 spec.rig.offset_m(),
-                spec.rig.run_in_m
+                spec.rig.run_in_m,
+                spec.rig.run_out_m
             ),
             ..Gpx::default()
         };
@@ -803,7 +865,16 @@ impl Plan {
             let id = format!("L{:02}", r.line + 1);
             let (s_lat, s_lon) = self.ll(r.a_start, r.x);
             let (o_lat, o_lon) = self.ll(r.a_on, r.x);
+            let (f_lat, f_lon) = self.ll(r.a_off, r.x);
             let (e_lat, e_lon) = self.ll(r.a_end, r.x);
+            // Where recording stops and where the wheel goes over are two
+            // places when the run-out is longer than the layback, and telling a
+            // helm to turn at the point the data stops is what the setting
+            // exists to prevent. Close enough together and they are one pin:
+            // two marks a boat length apart are clutter on a plotter, not
+            // information.
+            const APART_M: f64 = 20.0;
+            let parted = (r.a_end - r.a_off).abs() > APART_M;
             let mk = |name: String, desc: String, lat: f64, lon: f64| Point {
                 lat,
                 lon,
@@ -823,14 +894,29 @@ impl Plan {
                 o_lat,
                 o_lon,
             );
-            let end = mk(
+            let stop = mk(
                 format!("{id}E"),
-                format!("line {} recording off, turn away", r.line + 1),
-                e_lat,
-                e_lon,
+                format!("line {} recording off", r.line + 1),
+                f_lat,
+                f_lon,
             );
+            let end = if parted {
+                mk(format!("{id}T"), format!("line {} turn away", r.line + 1), e_lat, e_lon)
+            } else {
+                mk(
+                    format!("{id}E"),
+                    format!("line {} recording off, turn away", r.line + 1),
+                    e_lat,
+                    e_lon,
+                )
+            };
             if opts.line_waypoints {
-                for w in [&start, &on, &end] {
+                let mut marks = vec![&start, &on];
+                if parted {
+                    marks.push(&stop);
+                }
+                marks.push(&end);
+                for w in marks {
                     g.waypoints.push(Waypoint {
                         name: w.name.clone(),
                         desc: w.desc.clone(),
@@ -924,13 +1010,17 @@ impl Plan {
             }
             serde_json::json!({ "type": "Polygon", "coordinates": [c] })
         };
-        let band = |xa: f64, xb: f64| -> serde_json::Value {
-            ring(&[
-                (self.a0 - self.range_m, xa),
-                (self.a0 - self.range_m, xb),
-                (self.a1 + self.range_m, xb),
-                (self.a1 + self.range_m, xa),
-            ])
+        // Coverage is claimed for the box and for nothing else. The fish is
+        // only inside it between `a0` and `a1`, so a band drawn past them -- as
+        // this one used to be, by a whole range at each end -- paints coverage
+        // over water the plan makes no promise about. Clipped to the box, the
+        // blue on the chart and the percentage in the report are one statement.
+        let band = |xa: f64, xb: f64| -> Option<serde_json::Value> {
+            let (xa, xb) = (xa.max(self.x0), xb.min(self.x1));
+            if xb - xa < 0.01 {
+                return None;
+            }
+            Some(ring(&[(self.a0, xa), (self.a0, xb), (self.a1, xb), (self.a1, xa)]))
         };
         let strip = |a: f64, x: f64, b: f64, y: f64| -> serde_json::Value {
             let (la, lo) = self.ll(a, x);
@@ -945,9 +1035,11 @@ impl Plan {
         }));
         for &xl in &self.lines_x {
             for (a, b) in [(xl + self.nadir_m, xl + self.range_m), (xl - self.range_m, xl - self.nadir_m)] {
-                features.push(serde_json::json!({
-                    "type": "Feature", "geometry": band(a, b), "properties": { "kind": "swath" }
-                }));
+                if let Some(g) = band(a, b) {
+                    features.push(serde_json::json!({
+                        "type": "Feature", "geometry": g, "properties": { "kind": "swath" }
+                    }));
+                }
             }
         }
         // Where nothing reaches, drawn as itself rather than left as absence.
@@ -961,29 +1053,68 @@ impl Plan {
                 match (open, run) {
                     (true, None) => run = Some(x),
                     (false, Some(from)) => {
-                        features.push(serde_json::json!({
-                            "type": "Feature", "geometry": band(from, x), "properties": { "kind": "gap" }
-                        }));
+                        if let Some(g) = band(from, x) {
+                            features.push(serde_json::json!({
+                                "type": "Feature", "geometry": g, "properties": { "kind": "gap" }
+                            }));
+                        }
                         run = None;
                     }
                     _ => {}
                 }
             }
         }
+        // A leg is cut at the box edge, not at the recording points.
+        //
+        // The chart is a statement about water, not about time: every metre of
+        // the box on this line gets covered by this run -- the fish reaches it
+        // a layback after the boat does -- and every metre outside it is
+        // manoeuvring. Cutting the leg where recording starts instead put an
+        // orange run-in dash a layback deep into the box and left the far end
+        // of every line hanging a layback outside it, which reads as a plan
+        // that misses the edges it actually covers.
         for r in &self.runs {
-            features.push(serde_json::json!({
-                "type": "Feature",
-                "geometry": strip(r.a_start, r.x, r.a_on, r.x),
-                "properties": { "kind": "runin", "name": format!("L{:02}", r.line + 1) }
-            }));
-            features.push(serde_json::json!({
-                "type": "Feature",
-                "geometry": strip(r.a_on, r.x, r.a_end, r.x),
-                "properties": {
-                    "kind": "line", "name": format!("L{:02}", r.line + 1),
-                    "heading": r.heading_deg,
-                }
-            }));
+            let (enter, leave) = if r.dir > 0.0 { (self.a0, self.a1) } else { (self.a1, self.a0) };
+            let ahead = |from: f64, to: f64| (to - from) * r.dir > 0.5;
+            let name = format!("L{:02}", r.line + 1);
+            if ahead(r.a_start, enter) {
+                features.push(serde_json::json!({
+                    "type": "Feature",
+                    "geometry": strip(r.a_start, r.x, enter, r.x),
+                    "properties": { "kind": "runin", "name": name }
+                }));
+            }
+            // Where the fish is when the wheel goes over. With enough run-out
+            // that is the far edge and the line covers the box; with less, the
+            // last stretch is crossed and not surveyed, and it is drawn as
+            // what it is rather than left looking like line.
+            let covered_to = leave - r.dir * self.fish_short_m;
+            let short_from = if ahead(enter, covered_to) {
+                features.push(serde_json::json!({
+                    "type": "Feature",
+                    "geometry": strip(enter, r.x, covered_to, r.x),
+                    "properties": { "kind": "line", "name": name, "heading": r.heading_deg }
+                }));
+                covered_to
+            } else {
+                // The shortfall is longer than the box: nothing on this line is
+                // surveyed at all.
+                enter
+            };
+            if ahead(short_from, leave) {
+                features.push(serde_json::json!({
+                    "type": "Feature",
+                    "geometry": strip(short_from, r.x, leave, r.x),
+                    "properties": { "kind": "short", "name": name }
+                }));
+            }
+            if ahead(leave, r.a_end) {
+                features.push(serde_json::json!({
+                    "type": "Feature",
+                    "geometry": strip(leave, r.x, r.a_end, r.x),
+                    "properties": { "kind": "runout", "name": name }
+                }));
+            }
         }
         for t in &self.turns {
             let c: Vec<serde_json::Value> = t

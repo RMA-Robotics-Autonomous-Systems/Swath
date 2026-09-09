@@ -80,27 +80,72 @@ layback_m` astern of it — 54 m on the default rig — so a line that runs from
 edge of the box to the other puts the boat over the box and the fish short of it
 at both ends.
 
-Each line is therefore stretched, and not symmetrically:
+The run-in and the run-out are the legs either side of the box, and they are
+drawn and steered exactly as asked. 50 m of run-in is 50 m of line:
 
 ```
-  run-out  = the full antenna-to-fish offset, exactly
-  run-in   = the settling distance, less that offset
-  line     = the box, plus one run-in. Nothing else.
+  run-in   = what you asked for, before the near edge
+  line     = the box, edge to edge
+  run-out  = what you asked for, after the far edge
 ```
+
+What the layback does to those two legs is not symmetrical, and it is the one
+thing worth knowing about the whole arrangement.
+
+**The near edge is free.** Recording starts when the *fish* reaches it, and by
+then the boat is already a full offset inside the box. Whatever the run-in is —
+zero included — the near edge gets covered.
+
+**The far edge is not.** The fish is 54 m behind, so the leg has to carry on
+54 m past the box or the fish never gets there. A run-out shorter than the
+offset leaves `offset − run-out` metres of box that the line crosses and does
+not survey, at the far end of every line — and because the direction alternates,
+at both ends of the box. The plan reports that as `fish_short_m`, says it in
+words above the coverage figures, and draws the stretch in red inside the box.
+It is not folded into the coverage percentage, which would then mean two things
+at once.
+
+So the two settings buy different things:
+
+| | |
+| --- | --- |
+| run-in | settling. The fish gets the run-in *plus* the offset of straight running before the data starts, which is what the dialog reads out. |
+| run-out | coverage. It has a floor the run-in has not: at least the offset, or the box is not finished. |
 
 The run-in is not padding. A towed body needs about three cable lengths to
 settle behind a turn, and until it has, the constant-offset placement in
 [`nav`](../crates/swath-core/src/nav.rs) is wrong by an amount that decays with
 distance sailed — 5.4 m within 25 m of a turn, 1.8 m by 100 m, 0.7 m past 400 m
-on these recordings. The run-in buys that settling, which is why recording
-starts partway along the line rather than at its start, and why the GPX carries
-three points per line rather than two:
+on these recordings. That is why recording starts partway along the line rather
+than at its start, and why the GPX names each of these places rather than only
+the two ends:
 
 | | |
 | --- | --- |
-| `L01S` | the boat settles onto the heading here |
+| `L01S` | the leg starts here — the run-in, drawn as asked |
 | `L01A` | the fish has reached the box; recording starts |
-| `L01E` | the fish leaves the box |
+| `L01E` | the fish leaves the box; recording stops |
+| `L01T` | turn away — only when the run-out puts it more than 20 m past `L01E`, otherwise `L01E` says "turn away" as well |
+
+### What the chart draws
+
+The preview is a statement about water, not about time. A metre of the box that
+this line covers is drawn as line, whether the boat or the fish is over it at
+the moment — the fish reaches it a layback after the boat does, and it is the
+same water either way. Everything outside the box is manoeuvring, and anything
+inside it that does not get covered is drawn as neither:
+
+| | |
+| --- | --- |
+| line, magenta | the box, edge to edge |
+| run-in and run-out, orange dashed | getting on and off the line, outside the box at both ends |
+| shortfall, red dashed | inside the box, and only when the run-out is too short to finish it |
+| turn, grey dashed | outside the box, always |
+| coverage, blue | clipped to the box, so the fill on the chart and the percentage in the report are one statement |
+
+Cutting the leg at `L01A` instead — where recording actually starts — put an
+orange run-in dash a layback deep into the box and hung the far end of every
+line a layback outside it. It reads as a plan that misses the edges it covers.
 
 ## The turns are solved, not assumed
 
@@ -182,7 +227,7 @@ for an autopilot that would otherwise cut the corner; steering by hand it buys
 nothing but an alarm.
 
 Each file carries in its metadata the settings that produced it — range,
-altitude, nadir gap, spacing and regime, layback, run-in, speed, turn radius,
+altitude, nadir gap, spacing and regime, layback, run-in and run-out, speed, turn radius,
 line count, distance and time — for the same reason the mosaic names the
 settings it was painted with. A plan found on a laptop six months later says
 what it came from.

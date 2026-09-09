@@ -11,6 +11,7 @@
 // row, and how the across-track ruler knows what a pixel is worth.
 
 import { localScale } from './geo.js';
+import { contactColour } from './contacts.js';
 
 // The across-track axis the image was drawn on. A column offset is a *slant*
 // range in slant mode and a ground range in ground mode, and the seabed is only
@@ -531,12 +532,13 @@ export class WaterfallView {
       if (!at) continue;
       const [ix, bg] = at;
       const [x, y] = this.fromImage(ix, bg);
+      const colour = contactColour(c);
       ctx.save();
-      ctx.strokeStyle = c.colour || '#f0b429';
+      ctx.strokeStyle = colour;
       ctx.lineWidth = 1.4;
       ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.stroke();
       ctx.font = '600 9px "IBM Plex Mono", monospace';
-      ctx.fillStyle = c.colour || '#f0b429';
+      ctx.fillStyle = colour;
       ctx.fillText(c.id, x + 10, y + 3);
       ctx.restore();
     }

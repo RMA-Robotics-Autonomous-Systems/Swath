@@ -6,6 +6,7 @@ import { WaterfallView, sliderRow, verticalSliderRunsDown } from './waterfall.js
 import { installSelects } from './select.js';
 import { Planner } from './plan.js';
 import { haversine, offset, formatDistance, parseCoord, ddm } from './geo.js';
+import { contactColour, classColour, classGroup, classTitle } from './contacts.js';
 import {
   RECORDING, MOSAIC, TRACK, RASTER, VECTOR,
   buildTree, moveWithinSiblings, dropIndex, removeNode, drawOrder, isReady,
@@ -1349,13 +1350,36 @@ function renderContacts() {
   for (const c of S.contacts) {
     const li = document.createElement('li');
     if (S.selected === c.id) li.classList.add('sel');
+    // The dot is the legend: it is the colour the pin is drawn in, and it says
+    // what the class was in a word rather than in a swatch nobody can decode.
     li.innerHTML = `<span class="c-id">${esc(c.id)}</span>
       <span class="c-name">${esc(c.name || c.class || '—')}</span>
-      <span class="c-dot" style="background:${esc(c.colour || '#f0b429')}"></span>`;
+      <span class="c-dot" title="${esc(classTitle(c.class))}"
+            style="background:${esc(contactColour(c))}"></span>`;
     li.addEventListener('click', () => { selectContact(c.id); map.flyTo(c.lat, c.lon); });
     li.addEventListener('dblclick', () => openContact(c));
     ul.appendChild(li);
   }
+  renderContactLegend();
+}
+
+/// The key to the pins, built from what is actually on the chart.
+///
+/// A contact whose class this project has never heard of gets a colour of its
+/// own too, and it is listed under its own word -- otherwise the one pin the
+/// operator cannot place is the one the legend does not explain.
+function renderContactLegend() {
+  const el = $('contact-legend');
+  if (!el) return;
+  const seen = new Map();
+  for (const c of S.contacts) {
+    if (!(c.class || '').trim()) continue;
+    const g = classGroup(c.class);
+    const label = g ? g.label : c.class.trim().toLowerCase();
+    if (!seen.has(label)) seen.set(label, contactColour(c));
+  }
+  el.innerHTML = [...seen].map(([label, colour]) =>
+    `<span><i style="background:${esc(colour)}"></i>${esc(label)}</span>`).join('');
 }
 
 /// Paint a stored snapshot into a canvas. False when there is not one.
@@ -1379,6 +1403,19 @@ function selectContact(id) {
   map.selected = id;
   renderContacts();
   map.draw();
+}
+
+/// The pin's colour, beside the field that decides it.
+///
+/// Typing the class is what recolours the contact, which is not something an
+/// operator would guess. Showing the answer as it is typed is the whole of the
+/// documentation for it.
+function showClassColour() {
+  const el = $('cd-swatch');
+  if (!el) return;
+  const v = $('cd-class').value;
+  el.style.background = classColour(v);
+  el.title = classTitle(v);
 }
 
 /// Say what was understood, before it is saved. A transposed digit in a datum
@@ -1414,6 +1451,7 @@ async function openContact(seed) {
   $('cd-title').textContent = existing ? `Contact ${c.id}` : 'New contact';
   $('cd-name').value = c.name || '';
   $('cd-class').value = c.class || '';
+  showClassColour();
   $('cd-confidence').value = c.confidence || 'medium';
   $('cd-status').value = c.status || 'new';
   $('cd-length').value = c.length_m ?? '';
@@ -1693,6 +1731,11 @@ on('contact-dialog', 'close', async (e) => {
 
   c.name = $('cd-name').value.trim();
   c.class = $('cd-class').value.trim();
+  // Stored as well as derived. The viewer works it out from the class every
+  // time it draws, but the contact goes out as GeoJSON to software that has
+  // never heard of this table, and a feature with a colour on it draws right
+  // there too.
+  c.colour = contactColour(c);
   c.confidence = $('cd-confidence').value;
   c.status = $('cd-status').value;
   c.note = $('cd-note').value;
@@ -1807,6 +1850,7 @@ function bindChrome() {
     });
   });
   for (const id of ['cd-lat', 'cd-lon']) on(id, 'input', checkContactPos);
+  on('cd-class', 'input', showClassColour);
 }
 
 // ---- planning --------------------------------------------------------------

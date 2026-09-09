@@ -521,6 +521,16 @@ fn plan(a: &Args) -> Result<()> {
         let none = p["coverage"]["none"].as_f64().unwrap_or(0.0) * 100.0;
         let twice = p["coverage"]["twice"].as_f64().unwrap_or(0.0) * 100.0;
         println!("  coverage: {none:.1}% unseen, {twice:.0}% seen twice or more");
+        // The one number a short run-out costs, said out loud: the figures
+        // above describe the part of the box every line actually crosses.
+        let short = p["fish_short_m"].as_f64().unwrap_or(0.0);
+        if short > 0.5 {
+            println!(
+                "  run-out: the fish is {short:.0} m short of the far edge when the wheel goes over -- \
+                 that much of every line is crossed and not surveyed. Set the run-out to {:.0} m.",
+                p["offset_m"].as_f64().unwrap_or(0.0)
+            );
+        }
         if p["teardrops"].as_u64().unwrap_or(0) > 0 {
             println!(
                 "  turns: {} of {} loop out, up to {:.0} m past the ends of the lines",

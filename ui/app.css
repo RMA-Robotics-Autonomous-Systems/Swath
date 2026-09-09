@@ -179,6 +179,12 @@ li.busy .ds-name::after { content: " …"; color: var(--accent); }
 #contacts li.sel .c-id { color: #eafffb; }
 .c-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-dot { width: 8px; height: 8px; border-radius: 50%; }
+.c-legend {
+  display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 8px;
+  font: 10px/1.6 var(--sans); color: var(--ink-faint);
+}
+.c-legend span { display: flex; align-items: center; gap: 5px; }
+.c-legend i { width: 7px; height: 7px; border-radius: 50%; }
 
 /* ---- map ---- */
 #map-wrap { position: relative; min-width: 0; background: #0a0d10; }
@@ -314,6 +320,14 @@ dialog h3 {
 }
 .cd-fields { display: flex; flex-direction: column; gap: 9px; }
 .cd-fields .field.wide { grid-template-columns: 74px 1fr; }
+/* The class decides the colour the contact is drawn in, so the answer sits
+   in the row that asks the question. */
+.cd-fields .field.wide.has-swatch { grid-template-columns: 74px 1fr auto; }
+.cd-swatch {
+  width: 14px; height: 14px; border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, .55); box-shadow: 0 0 0 1px var(--line-soft);
+  background: #f0b429;
+}
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .two .field { display: grid; grid-template-columns: 1fr; gap: 3px; }
 .cd-coords {
@@ -757,6 +771,8 @@ li.layer.waiting .l-kind { color: var(--warn); border-color: var(--warn); }
 .pl-note b { color: var(--ink-dim); font-weight: 600; }
 .pl-note .good { color: var(--accent); }
 .pl-note .bad { color: var(--danger); }
+/* A settings hint that has turned into a warning about the settings. */
+.hint .bad { color: var(--danger); }
 .pl-digest {
   font-family: var(--mono); font-size: 9.5px; line-height: 1.5;
   color: var(--ink-faint); border-top: 1px solid var(--line-soft);

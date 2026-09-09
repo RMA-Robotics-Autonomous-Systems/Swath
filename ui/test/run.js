@@ -21,6 +21,8 @@ const geo = await import('../geo.js');
 const { api } = await import('../api.js');
 const { nextEnabled } = await import('../select.js');
 const { TileStore, MapView } = await import('../map.js');
+const { contactColour, classColour, classGroup, classTitle, CLASS_GROUPS, UNCLASSED }
+  = await import('../contacts.js');
 
 let failures = 0;
 let checks = 0;
@@ -1027,5 +1029,56 @@ group('typed coordinates', () => {
   ok(geo.ddm(51.4205, 'NS') === 'N5125.2300', `latitude formats as N5125.2300, got ${geo.ddm(51.4205, 'NS')}`);
   ok(geo.ddm(3.1556667, 'EW') === 'E00309.3400', `longitude pads to three degrees, got ${geo.ddm(3.1556667, 'EW')}`);
 });
+// ---- contact colours -------------------------------------------------------
+
+group('contact colours', () => {
+  const key = (s) => classGroup(s)?.key ?? null;
+
+  // The distinction the whole table exists for. A mine-like contact and a
+  // non-mine-like bottom object both have the word "mine" in them, and neither
+  // of them is a mine.
+  ok(key('mine') === 'ordnance', 'a mine is ordnance');
+  ok(key('MINE') === 'ordnance', 'case is not a distinction');
+  ok(key('UXO') === 'ordnance', 'UXO is ordnance');
+  ok(key('mine-like (MILCO)') === 'suspect', 'a MILCO is not live ordnance');
+  ok(key('MILCO') === 'suspect', 'the abbreviation alone');
+  ok(key('possible mine') === 'suspect', 'possible is not confirmed');
+  ok(key('NOMBO') === 'cleared', 'a NOMBO is not a target');
+  ok(key('non-mine-like bottom object') === 'cleared', 'nor is it spelled out');
+
+  // Words, not substrings: "magnetic" contains the letters of "net".
+  ok(key('magnetic anomaly') !== 'utility', 'magnetic is not a mooring net');
+  ok(key('net') === 'utility', 'but a net is');
+  ok(key('wrecks') === 'wreck', 'a plural is the same word');
+  ok(key('') === null && key('   ') === null, 'nothing said, nothing claimed');
+
+  // Every word a group lists has to reach that group, or a later edit has
+  // quietly shadowed it with an earlier one.
+  for (const g of CLASS_GROUPS) {
+    for (const w of g.words) {
+      ok(key(w) === g.key, `"${w}" belongs to ${g.key}, got ${key(w)}`);
+      ok(classColour(w) === g.colour, `"${w}" draws in the ${g.key} colour`);
+    }
+  }
+
+  // An unknown class gets a colour of its own, the same one every time, and
+  // never the one that means ordnance.
+  const red = CLASS_GROUPS.find(g => g.key === 'ordnance').colour;
+  for (const w of ['gizmo', 'thing', 'sample 4', 'zzz', 'q', 'foo bar']) {
+    ok(classGroup(w) === null, `"${w}" matches nothing`);
+    ok(classColour(w) === classColour(w.toUpperCase()), `"${w}" is stable`);
+    ok(classColour(w) !== red, `"${w}" must not come out looking like ordnance`);
+  }
+
+  // What a contact is actually drawn in.
+  ok(contactColour({ class: 'wreck', colour: '#123456' }) === '#c77dff', 'the class wins');
+  ok(contactColour({ class: '', colour: '#123456' }) === '#123456',
+     'an unclassified contact keeps the colour it came with');
+  ok(contactColour({ class: '' }) === UNCLASSED, 'and falls back to the old amber');
+  ok(contactColour(null) === UNCLASSED, 'no contact at all');
+  ok(classTitle('') === 'unclassified', 'the tooltip says so in words');
+  ok(classTitle('MILCO').includes('mine-like'), 'and says what an abbreviation means');
+});
+
 console.log(`\n${checks - failures}/${checks} checks passed`);
 process.exit(failures ? 1 : 0);

@@ -9,6 +9,7 @@
 import { TILE, lonLatToPx, pxToLonLat, metresPerPx, niceDistance, formatDistance,
          haversine, bearing } from './geo.js';
 import { tileUrl } from './api.js';
+import { contactColour } from './contacts.js';
 
 const MAX_Z = 21;
 const MIN_Z = 3;
@@ -687,7 +688,8 @@ export class MapView {
     }
     if (L.run) {
       for (const f of fc.features) {
-        if (f.properties?.kind !== 'runin' || f.geometry?.type !== 'LineString') continue;
+        const k = f.properties?.kind;
+        if ((k !== 'runin' && k !== 'runout') || f.geometry?.type !== 'LineString') continue;
         cased(f.geometry.coordinates, '#ffa726', 1.6, [5, 4]);
       }
     }
@@ -722,6 +724,14 @@ export class MapView {
         ctx.textAlign = 'left';
       }
     }
+
+    // Box the line crosses and does not survey: the wheel goes over before the
+    // fish has reached the far edge. Drawn last and drawn always, like a
+    // coverage hole -- it is a defect, not a layer to switch on.
+    for (const f of fc.features) {
+      if (f.properties?.kind !== 'short' || f.geometry?.type !== 'LineString') continue;
+      cased(f.geometry.coordinates, '#ff3b30', 2.6, [3, 3]);
+    }
     ctx.restore();
   }
 
@@ -731,7 +741,7 @@ export class MapView {
       const [x, y] = this.project(c.lat, c.lon);
       if (x < -40 || x > this.w + 40 || y < -40 || y > this.h + 40) continue;
       const sel = this.selected === c.id;
-      const colour = c.colour || '#f0b429';
+      const colour = contactColour(c);
       ctx.save();
       if (c.radius_m > 0) {
         const r = c.radius_m / this.metresPerPixel();

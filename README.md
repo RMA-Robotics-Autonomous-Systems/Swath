@@ -154,7 +154,10 @@ by default for the same reason.
 4. **Mark contacts.** `M`, then click, on the chart or the waterfall. Either
    way it lands in the same place on both, carrying the water depth and fish
    altitude at that spot and a sonar snapshot taken as it was marked. Extent is
-   recorded when you draw one, and left empty when you do not.
+   recorded when you draw one, and left empty when you do not. The pin takes
+   its colour from the classification — ordnance red, mine-like orange, wreck
+   violet, debris amber, not-a-target grey — so a chart with forty marks on it
+   can be read without opening any of them.
 5. **Report.** *Report* opens the outline, asks which layers each chart should
    carry, and renders HTML with a print stylesheet. "Export PDF" is the
    browser's own print-to-file.

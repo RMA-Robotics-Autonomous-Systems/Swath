@@ -185,6 +185,7 @@ export class Planner {
     set('pl-lay', s.rig.layback_m);
     set('pl-gps', s.rig.gps_to_towpoint_m);
     set('pl-runin', s.rig.run_in_m);
+    set('pl-runout', s.rig.run_out_m);
     set('pl-speed', s.rig.speed_kn);
     set('pl-turn', s.rig.turn_radius_m);
     set('pl-dead', s.rig.turn_allowance_s);
@@ -210,6 +211,7 @@ export class Planner {
     s.rig.layback_m = n('pl-lay', s.rig.layback_m);
     s.rig.gps_to_towpoint_m = n('pl-gps', s.rig.gps_to_towpoint_m);
     s.rig.run_in_m = n('pl-runin', s.rig.run_in_m);
+    s.rig.run_out_m = n('pl-runout', s.rig.run_out_m);
     s.rig.speed_kn = n('pl-speed', s.rig.speed_kn);
     s.rig.turn_radius_m = n('pl-turn', s.rig.turn_radius_m);
     s.rig.turn_allowance_s = n('pl-dead', s.rig.turn_allowance_s);
@@ -233,7 +235,20 @@ export class Planner {
       if (el) el.textContent = `${Math.round(at[k])} m`;
     }
     $('pl-nadir').textContent = `${Math.round(nd)} m`;
-    $('pl-offset').textContent = `${Math.round(s.rig.gps_to_towpoint_m + s.rig.layback_m)} m`;
+    const off = Math.round(s.rig.gps_to_towpoint_m + s.rig.layback_m);
+    $('pl-offset').textContent = `${off} m`;
+    // What the run-in is actually worth to the fish, and whether the run-out
+    // covers the box -- both answered where they are typed.
+    const settle = $('pl-settle');
+    if (settle) settle.textContent = `${Math.round(Math.max(0, s.rig.run_in_m) + off)} m`;
+    const cover = $('pl-cover');
+    if (cover) {
+      const shortfall = off - Math.max(0, s.rig.run_out_m);
+      cover.textContent = shortfall > 0.5
+        ? `${Math.round(shortfall)} m of the box goes unsurveyed at the far end of every line`
+        : 'the fish clears the box before the wheel goes over';
+      cover.classList.toggle('bad', shortfall > 0.5);
+    }
     const custom = document.querySelector('#pl-regime input:checked')?.value === 'custom';
     $('pl-spacing-row').hidden = !custom;
   }
@@ -285,8 +300,9 @@ export class Planner {
     const rows = [
       ['Lines', `${p.lines}${p.outer_lines ? ` (${p.outer_lines} outside the box)` : ''}`],
       ['Spacing', `${Math.round(p.spacing_m)} m`],
-      ['Line length', `${Math.round(p.line_length_m)} m`],
       ['Box', `${Math.round(p.box_m[0])} × ${Math.round(p.box_m[1])} m`],
+      ['Line length', `${Math.round(p.line_length_m)} m &mdash; ${Math.round(p.box_m[1])} in the box,`
+        + ` ${Math.round(p.line_length_m - p.box_m[1])} getting on and off it`],
       ['On the lines', `${(p.line_distance_m / 1000).toFixed(1)} km`],
       ['Turning', `${(p.turn_distance_m / 1000).toFixed(1)} km · ${p.turns}`],
       ['Total', `${(p.distance_m / 1000).toFixed(1)} km · ${(p.distance_m / 1852).toFixed(1)} NM`],
@@ -305,6 +321,18 @@ export class Planner {
       : `<b class="good">No holes.</b> ${Math.round(c.twice * 100)}% of the box is seen twice or more,
          the rest once.`;
 
+    // A run-out shorter than the layback is the one setting that quietly
+    // costs coverage, so it is said before the coverage figures rather than
+    // after them.
+    const short = p.fish_short_m || 0;
+    const shortWarn = short > 0.5
+      ? `<p class="pl-warn"><b>The run-out is shorter than the layback.</b> The leg ends
+         ${Math.round(p.run_out_m)} m past the box and the fish is ${Math.round(p.offset_m)} m astern, so
+         the wheel goes over with <b>${Math.round(short)} m</b> of the box still to come — crossed and
+         not surveyed, at the far end of every line, which is both ends of the box. The figures below
+         are for the part every line does cross. Set the run-out to ${Math.round(p.offset_m)} m.</p>`
+      : '';
+
     const warn = p.teardrops && p.overshoot_m > 120
       ? `<p class="pl-warn"><b>The turns need room.</b> A 180&deg; between neighbouring lines wants
          ${Math.round(p.turn_room_m)} m across track and the spacing is ${Math.round(p.spacing_m)} m, so
@@ -315,7 +343,7 @@ export class Planner {
     box.innerHTML =
       `<dl class="pl-kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}` +
       `<dt>Turns</dt><dd>${p.teardrops ? 'teardrop' : '180°'}, ${Math.round(p.overshoot_m)} m past the ends</dd></dl>` +
-      bar + `<p class="pl-note">${cov}</p>` + warn +
+      shortWarn + bar + `<p class="pl-note">${cov}</p>` + warn +
       `<table class="pl-tg"><thead><tr><th>Target</th><th>Looks</th><th>Aspect</th><th></th></tr></thead><tbody>` +
       p.targets.map((t) =>
         `<tr><td>${esc(t.name)}</td><td class="n">${t.looks}</td>` +
@@ -329,7 +357,7 @@ export class Planner {
 
   _bind() {
     for (const id of ['pl-range', 'pl-alt', 'pl-nadk', 'pl-spacing', 'pl-lay', 'pl-gps',
-                      'pl-runin', 'pl-speed', 'pl-turn', 'pl-dead', 'pl-margin',
+                      'pl-runin', 'pl-runout', 'pl-speed', 'pl-turn', 'pl-dead', 'pl-margin',
                       'pl-step']) {
       const el = $(id);
       if (el) el.addEventListener('input', () => { this.readSettings(); this._queue(); });

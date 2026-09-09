@@ -88,23 +88,152 @@ fn lines_are_stretched_for_the_layback_not_the_boat() {
     let off = s.rig.offset_m();
     assert!((off - 54.0).abs() < 1e-9, "44 m of layback behind a tow point 10 m aft of the GPS");
     for r in &p.runs {
-        // The whole line costs the box plus one run-in, and nothing more.
+        // The whole line costs the box plus a run-in and a run-out, and
+        // nothing more.
         assert!(
-            (r.length_m - ((p.a1 - p.a0) + s.rig.run_in_m)).abs() < 1e-6,
+            (r.length_m - ((p.a1 - p.a0) + s.rig.run_in_m + s.rig.run_out_m)).abs() < 1e-6,
             "line {} is {} m",
             r.line,
             r.length_m
         );
+        let (near, far) = if r.dir > 0.0 { (p.a0, p.a1) } else { (p.a1, p.a0) };
+        // The legs are the lengths asked for, measured from the box edges. An
+        // operator who types 150 gets 150 m of line before the box, not 150
+        // less a layback they have to work out for themselves.
+        assert!((r.a_start - (near - r.dir * s.rig.run_in_m)).abs() < 1e-6, "the run-in leg");
+        assert!((r.a_end - (far + r.dir * s.rig.run_out_m)).abs() < 1e-6, "the run-out leg");
         // Recording starts with the fish exactly on the near edge, and stops
-        // with it exactly on the far one.
+        // with it exactly on the far one -- which the default run-out is long
+        // enough to reach.
         let fish_on = r.a_on - r.dir * off;
         let fish_off = r.a_off - r.dir * off;
-        let (near, far) = if r.dir > 0.0 { (p.a0, p.a1) } else { (p.a1, p.a0) };
         assert!((fish_on - near).abs() < 1e-6, "fish at {fish_on}, box edge {near}");
         assert!((fish_off - far).abs() < 1e-6, "fish at {fish_off}, box edge {far}");
-        // The run-out is exactly the offset. Anything else is a guess.
-        assert!((r.a_end - (far + r.dir * off)).abs() < 1e-6);
     }
+    assert_eq!(p.fish_short_m, 0.0, "the default run-out clears the default layback");
+}
+
+/// The run-in and the run-out are two settings, and each one only moves its
+/// own end of the line.
+///
+/// They were one number for a while, with the run-out pinned to the offset --
+/// which is the part that is not a choice. Asking for straight running after
+/// the fish is clear is a different question from asking for it before the
+/// fish arrives, and the boat pays for them at opposite ends.
+#[test]
+fn the_run_in_and_the_run_out_are_separate() {
+    let base = plan::solve(&spec(), &targets(), 45.0).unwrap();
+    let off = spec().rig.offset_m();
+
+    // A longer run-out moves the far end of the leg and nothing else.
+    let mut s = spec();
+    s.rig.run_out_m = 140.0;
+    let p = plan::solve(&s, &targets(), 45.0).unwrap();
+    for (r, b) in p.runs.iter().zip(base.runs.iter()) {
+        let far = if r.dir > 0.0 { p.a1 } else { p.a0 };
+        assert!((r.a_start - b.a_start).abs() < 1e-6, "the run-out moved the start of a line");
+        assert!((r.a_on - b.a_on).abs() < 1e-6, "the run-out moved where data starts");
+        assert!((r.a_off - (far + r.dir * off)).abs() < 1e-6, "the run-out moved where data stops");
+        assert!((r.a_end - (far + r.dir * 140.0)).abs() < 1e-6, "the leg ends where it was asked to");
+        assert!((r.length_m - (b.length_m + 80.0)).abs() < 1e-6);
+    }
+
+    // A longer run-in moves the near end and nothing else.
+    let mut t = spec();
+    t.rig.run_in_m += 60.0;
+    let q = plan::solve(&t, &targets(), 45.0).unwrap();
+    for (r, b) in q.runs.iter().zip(base.runs.iter()) {
+        assert!((r.a_start - (b.a_start - r.dir * 60.0)).abs() < 1e-6, "the run-in owns the start");
+        assert!((r.a_end - b.a_end).abs() < 1e-6, "the run-in moved the end of a line");
+    }
+
+    // The turn starts where the leg ends, not where the data stops.
+    assert!(
+        (p.turns[0].points[0][0] - p.runs[0].a_end).abs() < 1e-6,
+        "the turn starts at {} and the leg ends at {}",
+        p.turns[0].points[0][0],
+        p.runs[0].a_end
+    );
+
+    // And what is drawn is what was asked for, to the metre.
+    for (kind, want) in [("runin", spec().rig.run_in_m), ("runout", 140.0)] {
+        let drawn = drawn_lengths(&p, kind);
+        assert_eq!(drawn.len(), p.runs.len(), "one {kind} a line");
+        for d in drawn {
+            assert!((d - want).abs() < 0.5, "a {kind} is drawn {d:.1} m long, {want:.0} was asked for");
+        }
+    }
+}
+
+/// A run-out shorter than the layback does not shorten the leg by a little.
+/// It leaves the fish inside the box when the wheel goes over, and that is
+/// box the line crosses and does not survey.
+#[test]
+fn a_short_run_out_leaves_the_box_unfinished() {
+    let mut s = spec();
+    s.rig.run_out_m = 20.0;
+    let p = plan::solve(&s, &targets(), 45.0).unwrap();
+    let off = s.rig.offset_m();
+    let short = off - 20.0;
+    assert!((p.fish_short_m - short).abs() < 1e-9, "short by {}", p.fish_short_m);
+
+    for r in &p.runs {
+        let far = if r.dir > 0.0 { p.a1 } else { p.a0 };
+        // The leg still ends exactly where it was told to.
+        assert!((r.a_end - (far + r.dir * 20.0)).abs() < 1e-6);
+        // Recording stops with the leg, not at the far edge, because the fish
+        // never gets there.
+        assert!((r.a_off - r.a_end).abs() < 1e-6, "data outlasts the leg");
+        let fish_off = r.a_off - r.dir * off;
+        assert!((fish_off - (far - r.dir * short)).abs() < 1e-6, "the fish stops {short} m short");
+    }
+
+    // Drawn: the line covers the box less the shortfall, the rest is marked as
+    // crossed-not-surveyed, and that mark is inside the box where the hole is.
+    let box_len = p.a1 - p.a0;
+    for d in drawn_lengths(&p, "line") {
+        assert!((d - (box_len - short)).abs() < 0.5, "a line is drawn {d:.1} m long");
+    }
+    let shorts = drawn_lengths(&p, "short");
+    assert_eq!(shorts.len(), p.runs.len(), "one shortfall a line");
+    for d in &shorts {
+        assert!((d - short).abs() < 0.5, "a shortfall is drawn {d:.1} m long");
+    }
+    for f in p.to_geojson()["features"].as_array().unwrap() {
+        if f["properties"]["kind"] != "short" {
+            continue;
+        }
+        for c in f["geometry"]["coordinates"].as_array().unwrap() {
+            let (a, _) = along_across(&p, c[1].as_f64().unwrap(), c[0].as_f64().unwrap());
+            assert!(a > p.a0 - 0.5 && a < p.a1 + 0.5, "the shortfall is outside the box");
+        }
+    }
+
+    // Enough run-out and there is nothing to mark.
+    let mut ok = spec();
+    ok.rig.run_out_m = off;
+    let q = plan::solve(&ok, &targets(), 45.0).unwrap();
+    assert_eq!(q.fish_short_m, 0.0);
+    assert!(drawn_lengths(&q, "short").is_empty(), "a sound plan draws no shortfall");
+}
+
+/// How long each feature of one kind is drawn, in metres of the plan frame.
+fn drawn_lengths(p: &plan::Plan, kind: &str) -> Vec<f64> {
+    p.to_geojson()["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["properties"]["kind"] == kind && f["geometry"]["type"] == "LineString")
+        .map(|f| {
+            let cs: Vec<(f64, f64)> = f["geometry"]["coordinates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| along_across(p, c[1].as_f64().unwrap(), c[0].as_f64().unwrap()))
+                .collect();
+            cs.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum()
+        })
+        .collect()
 }
 
 #[test]
@@ -316,7 +445,7 @@ fn the_preview_geojson_covers_what_the_chart_needs() {
     let feats = gj["features"].as_array().unwrap();
     let kinds: Vec<&str> =
         feats.iter().filter_map(|f| f["properties"]["kind"].as_str()).collect();
-    for want in ["box", "swath", "runin", "line", "turn"] {
+    for want in ["box", "swath", "runin", "runout", "line", "turn"] {
         assert!(kinds.contains(&want), "no {want} in the preview");
     }
     assert_eq!(kinds.iter().filter(|k| **k == "line").count(), p.runs.len());
@@ -324,6 +453,69 @@ fn the_preview_geojson_covers_what_the_chart_needs() {
     for f in feats {
         assert!(f["geometry"]["coordinates"].is_array());
     }
+}
+
+/// What is inside the box is line, and only line.
+///
+/// The run-in, the run-out and the turns are how the boat gets onto the next
+/// line; none of them is survey, and none of them belongs inside the rectangle
+/// the plan is measured against. Drawing them there is not a cosmetic mistake:
+/// it reads as a plan whose lines do not reach the edges they actually cover.
+#[test]
+fn only_the_lines_are_inside_the_box() {
+    for (az, run_out) in [(0.0, 60.0), (30.0, 54.0), (45.0, 120.0), (90.0, 300.0)] {
+        let mut s = spec();
+        s.rig.run_out_m = run_out;
+        let p = plan::solve(&s, &targets(), az).unwrap();
+        let gj = p.to_geojson();
+        let tol = 0.5;
+        for f in gj["features"].as_array().unwrap() {
+            let kind = f["properties"]["kind"].as_str().unwrap_or("");
+            if f["geometry"]["type"] != "LineString" {
+                continue;
+            }
+            for c in f["geometry"]["coordinates"].as_array().unwrap() {
+                let (lon, lat) = (c[0].as_f64().unwrap(), c[1].as_f64().unwrap());
+                let (a, _) = along_across(&p, lat, lon);
+                match kind {
+                    "line" => assert!(
+                        a > p.a0 - tol && a < p.a1 + tol,
+                        "{az}\u{b0}: a line reaches {:.1} m outside the box",
+                        (p.a0 - a).max(a - p.a1)
+                    ),
+                    "runin" | "runout" | "turn" => assert!(
+                        a < p.a0 + tol || a > p.a1 - tol,
+                        "{az}\u{b0}: a {kind} runs {:.1} m into the box",
+                        (a - p.a0).min(p.a1 - a)
+                    ),
+                    _ => {}
+                }
+            }
+        }
+        // And the lines fill it: every one spans the box end to end.
+        for f in gj["features"].as_array().unwrap() {
+            if f["properties"]["kind"] != "line" {
+                continue;
+            }
+            let c = f["geometry"]["coordinates"].as_array().unwrap();
+            let (a0, _) = along_across(&p, c[0][1].as_f64().unwrap(), c[0][0].as_f64().unwrap());
+            let (a1, _) = along_across(&p, c[1][1].as_f64().unwrap(), c[1][0].as_f64().unwrap());
+            assert!(
+                ((a1 - a0).abs() - (p.a1 - p.a0)).abs() < 0.5,
+                "{az}\u{b0}: a drawn line is {:.1} m long, the box is {:.1}",
+                (a1 - a0).abs(),
+                p.a1 - p.a0
+            );
+        }
+    }
+}
+
+/// A position back into the plan frame: along-track, across-track.
+fn along_across(p: &plan::Plan, lat: f64, lon: f64) -> (f64, f64) {
+    let (e, n) = p.frame.fwd(lat, lon);
+    let th = p.azimuth_deg.to_radians();
+    let (su, cu) = (th.sin(), th.cos());
+    (e * su + n * cu, e * cu - n * su)
 }
 
 /// GPX cannot express an arc, so a turn is points -- but they belong in a track,
