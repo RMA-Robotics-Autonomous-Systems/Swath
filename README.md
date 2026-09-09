@@ -11,6 +11,13 @@ It reads EdgeTech JSF and XTF, imports GeoTIFF grids and GPX, and runs as a
 local web app or a desktop window. There is no build step for the frontend and
 no C library underneath: `cargo build` is the whole install.
 
+![The chart and the waterfall, over one recording](docs/images/overview.png)
+
+*One recording, both frequency bands. The chart carries the mosaic and the
+fish's own track; the waterfall shows a pane per band — 580 kHz on the left,
+1550 kHz on the right — over the same rows of the same seabed. The layer panel
+is the draw order, top first.*
+
 ---
 
 ## Build
@@ -71,8 +78,7 @@ looks broken.
    layer row says `building…` and reports a failure rather than quietly
    switching itself off.
 3. **Look.** Tick a mosaic to put it on the chart. Tick two and the waterfall
-   shows both bands over the same seabed, sharing rows and scroll — 580 kHz
-   beside 1550 kHz, same ground.
+   shows both bands over the same seabed, sharing rows and scroll.
 4. **Mark contacts.** `M`, then click, on the chart or the waterfall. Either
    way it lands in the same place on both, carrying the water depth and fish
    altitude at that spot and a sonar snapshot taken as it was marked. Extent is
@@ -80,6 +86,13 @@ looks broken.
 5. **Report.** *Report* opens the outline, asks which layers each chart should
    carry, and renders HTML with a print stylesheet. "Export PDF" is the
    browser's own print-to-file.
+
+![Zoomed in on the seabed](docs/images/seabed.png)
+
+*Zoomed to a 20 m scale bar: ripples, and the fish's own track laid across
+them. The status bar reads the cursor out in WGS 84 and in the project's grid
+at once — here UTM zone 31N — because a position that has to go in a report is
+worth reading without a conversion step.*
 
 Nothing above needs the command line. It is all there when you want it:
 
@@ -102,6 +115,14 @@ so on its navigation panel, the report says so on its cover. Three tow models
 are selectable and the spread between them *is* the uncertainty. Nothing here
 invents a precision it cannot support. See [Where things are](docs/positions.md).
 
+![The navigation panel for a recording](docs/images/navigation.png)
+
+*Navigation is per recording, because the layback is a property of how that day
+was rigged — and it is what places the imagery, so changing it re-solves the
+track and repaints the mosaic. Each field says what it does to the picture: the
+speed of sound is the number the topside was set to rather than a measurement,
+and 1500 against a real 1524 draws the whole swath 1.6% narrow.*
+
 **The two views cannot drift apart.** A contact marked on the waterfall and the
 same contact marked on the chart must land in the same place, so both go
 through one transform and its inverse rather than two implementations that
@@ -118,6 +139,23 @@ than GDAL's, so an imported layer's position can be held to an oracle, and it
 refuses encodings it cannot handle *by name* instead of returning something
 plausible. The projections are ours for the same reason and are checked against
 PROJ to sub-millimetre. It reads GeoTIFF; it does not write one.
+
+## The report
+
+![The report outline](docs/images/report.png)
+
+*The report keeps its own list of what to draw, because the layer tree is a
+working view — a bathymetry grid switched on to check a depth stays on — and a
+chart in a deliverable is not that. Nothing is rendered until it is agreed.*
+
+The bands are named from the frequency the sonar actually transmitted, which is
+not simply a matter of reading it off: the JSF sweep field is a `u16` in units
+of 10 Hz and cannot express anything above 655.35 kHz, so a 1550 kHz channel is
+recorded as 184–294 kHz with nothing in the ping to say by how much it
+overflowed. The XTF written alongside carries the centre frequency as a float,
+and the two are matched *modulo the wrap*. Where nothing corroborates it the
+label falls back to the channel number, rather than printing a figure that is
+wrong by a megahertz.
 
 ## Documentation
 
@@ -152,7 +190,7 @@ job. The golden files cut from real recordings live with the recordings, in
 
 ## Status
 
-Used on real surveys, by the person who wrote it. The parts that are unfinished
+Used on real surveys, by the people who wrote it. The parts that are unfinished
 are named as unfinished rather than left for you to discover — the tow model's
 bearing through a turn is genuinely unobserved, and inter-line registration is
 not in this tree at all.
@@ -160,6 +198,10 @@ not in this tree at all.
 Chart tiles come from OpenStreetMap and OpenSeaMap and are cached to disk. The
 fetcher is paced to two connections and will not bulk-download; if you are
 going to lean on it, read their tile usage policies first.
+
+The screenshots are of a real job: three dummy mines laid on the seabed off
+Zeebrugge and then searched for, which is about as direct a test of a sidescan
+as exists.
 
 ## Licence
 
