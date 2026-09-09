@@ -1,0 +1,19 @@
+[package]
+name = "swath-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop shell for swath, the sidescan survey viewer."
+
+[[bin]]
+name = "swath-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+swath-core = { workspace = true }
+tauri = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,641 @@
+/* Dark by default: this gets used in a wheelhouse at night as often as at a
+   desk, and a white page at 03:00 costs the operator their night vision. */
+:root {
+  --bg:        #0e1216;
+  --panel:     #151b21;
+  --panel-2:   #1b232b;
+  --line:      #26313b;
+  --line-soft: #1e262e;
+  --ink:       #dde5ec;
+  --ink-dim:   #8b9aa8;
+  --ink-faint: #5d6b78;
+  --accent:    #35b8a6;
+  --accent-dim:#1d6a61;
+  --warn:      #d9803f;
+  --danger:    #cf5b4b;
+  --boat:      #5fa8e8;
+  --fish:      #f0b429;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --h-bar: 44px;
+  --h-status: 26px;
+  /* What the engine draws itself -- scrollbars, the <select> popup, the number
+     spinner -- follows this and not the desktop theme. Without it those parts
+     come out light on a dark page. */
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 13px/1.45 var(--sans);
+  display: grid; grid-template-rows: var(--h-bar) 1fr var(--h-status);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.spacer { flex: 1; }
+
+/* ---- top bar ---- */
+#bar {
+  display: flex; align-items: center; gap: 14px; padding: 0 12px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.brand {
+  display: flex; align-items: center; gap: 8px;
+  font: 600 13px/1 var(--sans); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink); padding-right: 6px;
+}
+.mark {
+  width: 13px; height: 13px; border-radius: 2px;
+  background: linear-gradient(135deg, var(--accent), var(--fish));
+}
+.group { display: flex; align-items: center; gap: 6px; }
+
+.field { display: flex; align-items: center; gap: 6px; }
+.field > span {
+  font: 500 10px/1 var(--sans); letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-faint); white-space: nowrap;
+}
+.field > em { font-style: normal; color: var(--ink-faint); font-size: 11px; }
+.field.wide { display: grid; grid-template-columns: 92px 1fr auto; gap: 8px; align-items: center; }
+.field.narrow select { width: 62px; }
+
+select, input[type=number], input[type=text], input:not([type]), textarea {
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 4px 6px; font: 12px/1.3 var(--sans); min-width: 0;
+}
+input[type=number] { font-family: var(--mono); }
+/* WebKit paints a menulist with its own theme and ignores the background set
+   above -- in the desktop shell every <select> was a white pill with grey text
+   on it. `appearance: none` takes the widget back, and the arrow is then ours
+   to draw. */
+select {
+  -webkit-appearance: none; appearance: none;
+  padding-right: 19px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%),
+    linear-gradient(135deg, var(--ink-dim) 50%, transparent 50%);
+  background-position: calc(100% - 11px) 53%, calc(100% - 7px) 53%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+select:disabled { color: var(--ink-faint); }
+select:focus, input:focus, textarea:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-dim);
+}
+textarea { resize: vertical; font-family: var(--sans); }
+
+/* Our own dropdown list; see select.js for why the native one is not used. */
+.sel-pop {
+  position: fixed; z-index: 60; overflow-y: auto;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.55); padding: 3px;
+}
+.sel-opt {
+  padding: 5px 10px; border-radius: 3px; cursor: pointer;
+  font: 12px/1.3 var(--sans); color: var(--ink); white-space: nowrap;
+}
+.sel-opt.at { background: #222c35; }
+.sel-opt.on { color: var(--accent); }
+.sel-opt.on::after { content: ' ✓'; }
+.sel-opt.off { color: var(--ink-faint); cursor: default; }
+.sel-opt.off.at { background: transparent; }
+
+button {
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 5px 10px; font: 500 12px/1.2 var(--sans); cursor: pointer;
+}
+button:hover { background: #222c35; border-color: #33414e; }
+button.on { background: var(--accent-dim); border-color: var(--accent); color: #eafffb; }
+button.primary { background: var(--accent-dim); border-color: var(--accent); }
+button.danger { color: var(--danger); border-color: #40292a; }
+button.mini { padding: 1px 6px; font-size: 12px; line-height: 1; }
+.check { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-dim); }
+.check input { accent-color: var(--accent); }
+
+/* ---- layout ---- */
+main {
+  display: grid; grid-template-columns: 268px 1fr 5px var(--right, 440px);
+  min-height: 0; overflow: hidden;
+}
+#left, #right { background: var(--panel); min-height: 0; display: flex; flex-direction: column; }
+/* The sidebar itself does not scroll. Its two lists do, independently, so the
+   Navigation panel stays reachable at the bottom however many recordings are
+   loaded and expanded -- it was sliding off the end of the window. */
+#left { border-right: 1px solid var(--line); overflow: hidden; }
+#tree-panel     { flex: 1 1 auto; overflow-y: auto; min-height: 120px; }
+#contacts-panel { flex: 0 1 auto; overflow-y: auto; min-height: 70px; max-height: 40%; }
+#right { border-left: 1px solid var(--line); }
+#splitter { background: var(--line-soft); cursor: col-resize; }
+#splitter:hover { background: var(--accent-dim); }
+
+.panel { border-bottom: 1px solid var(--line-soft); padding: 10px 12px 12px; }
+.panel.grow { min-height: 90px; overflow-y: auto; }
+.panel h2 {
+  display: flex; align-items: center; gap: 8px;
+  font: 600 10px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-faint); margin: 0 0 9px;
+}
+.count {
+  font-family: var(--mono); font-size: 10px; color: var(--ink-dim);
+  background: var(--panel-2); border-radius: 8px; padding: 1px 6px;
+}
+.rows { display: flex; flex-direction: column; gap: 7px; }
+.hint { font-size: 11px; line-height: 1.5; color: var(--ink-faint); margin: 2px 0 0; }
+.hint strong { color: var(--warn); font-weight: 600; }
+
+/* ---- dataset list ---- */
+#datasets, #contacts { list-style: none; margin: 0; padding: 0; }
+#datasets li {
+  border: 1px solid var(--line-soft); border-radius: 3px;
+  margin-bottom: 6px; overflow: hidden; background: var(--panel-2);
+}
+.ds-head {
+  display: flex; align-items: center; gap: 7px; padding: 6px 8px; cursor: pointer;
+}
+.ds-head:hover { background: #1f2831; }
+.ds-swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.ds-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-meta { font: 10px/1 var(--mono); color: var(--ink-faint); }
+.ds-body { padding: 2px 8px 8px 24px; display: none; }
+li.open .ds-body { display: block; }
+.ds-sub { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-dim); padding: 2px 0; }
+.ds-sub input { accent-color: var(--accent); }
+.ds-stat { font: 10px/1.6 var(--mono); color: var(--ink-faint); }
+li.busy .ds-name::after { content: " …"; color: var(--accent); }
+
+/* ---- contacts ---- */
+#contacts li {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center;
+  padding: 5px 7px; border-radius: 3px; cursor: pointer; font-size: 12px;
+}
+#contacts li:hover { background: var(--panel-2); }
+#contacts li.sel { background: var(--accent-dim); }
+.c-id { font: 600 10px/1 var(--mono); color: var(--accent); }
+#contacts li.sel .c-id { color: #eafffb; }
+.c-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* ---- map ---- */
+#map-wrap { position: relative; min-width: 0; background: #0a0d10; }
+#map { width: 100%; height: 100%; display: block; cursor: crosshair; }
+#map-wrap.pan #map { cursor: grab; }
+#map-wrap.pan.drag #map { cursor: grabbing; }
+#map-overlay { position: absolute; inset: 0; pointer-events: none; }
+#scalebar {
+  position: absolute; left: 14px; bottom: 14px;
+  font: 10px/1 var(--mono); color: var(--ink); text-shadow: 0 1px 3px #000;
+}
+#scalebar .bar {
+  height: 5px; border: 1px solid var(--ink); border-top: 0;
+  margin-bottom: 3px; background: rgba(0,0,0,.35);
+}
+#north {
+  position: absolute; right: 14px; bottom: 14px; width: 26px; height: 26px;
+  border: 1px solid rgba(221,229,236,.5); border-radius: 50%;
+  display: grid; place-items: center; font: 600 10px/1 var(--mono);
+  background: rgba(10,13,16,.6); text-shadow: 0 1px 2px #000;
+}
+.hint-bubble {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%);
+  background: rgba(21,27,33,.94); border: 1px solid var(--line);
+  border-radius: 3px; padding: 5px 11px; font-size: 12px; color: var(--ink-dim);
+  pointer-events: none; opacity: 0; transition: opacity .15s;
+}
+.hint-bubble.show { opacity: 1; }
+
+/* ---- waterfall ---- */
+.wf-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px;
+  padding: 6px 10px; flex: none;
+}
+/* Fixed height whether or not there is anything to say, so the image does not
+   move when the readout fills in. */
+.wf-readout {
+  display: flex; align-items: center; gap: 14px;
+  height: 20px; padding: 0 10px 3px; flex: none;
+  border-bottom: 1px solid var(--line-soft);
+  overflow: hidden; white-space: nowrap;
+}
+.wf-head .field > span { font-size: 9px; }
+.wf-head select { max-width: 150px; }
+#wf-scale { font-size: 10px; color: var(--ink-faint); white-space: nowrap; flex: none; }
+#wf-more { font-size: 10px; color: var(--warn); white-space: nowrap; flex: none; }
+#wf-pos {
+  font-size: 10.5px; color: var(--ink-dim); white-space: nowrap;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.wf-head .spacer { min-width: 4px; }
+#wf-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #07090b; }
+/* The panes leave the scrollbar's strip clear on the right. */
+#wf-panes { position: absolute; inset: 0 20px 0 0; display: flex; gap: 1px; }
+.wf-pane {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+  background: #07090b; border-left: 1px solid var(--line-soft);
+}
+.wf-pane:first-child { border-left: 0; }
+.wf-pane canvas { flex: 1; width: 100%; min-height: 0; display: block; cursor: crosshair; }
+.wf-pane.drag canvas { cursor: grabbing; }
+/* Which pane the chart link, the scale readout and the scrollbar follow. With
+   one pane it says nothing; with several it says which one is speaking. */
+.wf-pane.lead .wf-pane-head { color: var(--ink); }
+.wf-pane.lead .wf-pane-head::after { content: '●'; font-size: 7px; color: var(--accent); }
+.wf-pane-head {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  padding: 3px 8px; font: 500 10px/1.4 var(--sans); color: var(--ink-faint);
+  background: var(--panel); border-bottom: 1px solid var(--line-soft);
+  white-space: nowrap; overflow: hidden;
+}
+.wf-pane-head .nm { overflow: hidden; text-overflow: ellipsis; }
+.wf-pane-head .ramp {
+  flex: none; width: 22px; height: 7px; border-radius: 2px;
+  border: 1px solid var(--line);
+}
+.wf-pane-head .who { color: var(--ink-faint); }
+.empty {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--ink-faint); font-size: 12px; pointer-events: none;
+}
+/* A vertical scrollbar inside the pane, because the axis it scrolls is
+   vertical. `writing-mode` is the modern spelling; `appearance` is what WebKit
+   still wants, and the shell is WebKit. */
+/* The standard vertical slider: minimum at the top, like a scrollbar. Engines
+   that do not honour it get WebKit's older appearance instead -- which runs the
+   other way, so `sliderRow` in waterfall.js turns the value round to match.
+   `html.slider-up` is set from the measurement, not from a browser sniff. */
+#wf-scroll {
+  position: absolute; top: 6px; right: 4px; bottom: 6px;
+  writing-mode: vertical-lr;
+  width: 14px; margin: 0; padding: 0;
+  accent-color: var(--accent);
+  background: transparent; opacity: .45; transition: opacity .15s;
+}
+#wf-wrap:hover #wf-scroll { opacity: .95; }
+#wf-scroll:disabled { display: none; }
+html.slider-up #wf-scroll { -webkit-appearance: slider-vertical; appearance: slider-vertical; }
+
+/* ---- status ---- */
+#status {
+  display: flex; align-items: center; gap: 16px; padding: 0 12px;
+  background: var(--panel); border-top: 1px solid var(--line);
+  font-size: 11px; color: var(--ink-dim);
+}
+#msg { color: var(--accent); }
+#msg.warn { color: var(--warn); }
+#msg.error { color: var(--danger); }
+
+/* ---- dialog ---- */
+dialog {
+  background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 5px; padding: 0; max-width: 720px; box-shadow: 0 18px 60px rgba(0,0,0,.6);
+}
+dialog::backdrop { background: rgba(4,6,8,.62); }
+dialog h3 {
+  margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line);
+  font: 600 11px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-dim);
+}
+/* Wider than the 720px every other dialog gets: four crops side by side plus a
+   column of fields does not fit in it, and shrinking the crops to make it fit
+   defeats the point of having four. */
+#contact-dialog { max-width: min(976px, calc(100vw - 32px)); }
+.cd-body { display: grid; grid-template-columns: 568px 320px; gap: 16px; padding: 16px; }
+.cd-snap { position: relative; }
+.cd-snaps canvas {
+  background: #07090b;
+  border: 1px solid var(--line); border-radius: 3px; display: block;
+}
+.cd-snap-label {
+  position: absolute; left: 8px; top: 8px; font: 10px/1 var(--mono);
+  color: var(--ink-faint); background: rgba(10,13,16,.75); padding: 3px 6px; border-radius: 2px;
+}
+.cd-fields { display: flex; flex-direction: column; gap: 9px; }
+.cd-fields .field.wide { grid-template-columns: 74px 1fr; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.two .field { display: grid; grid-template-columns: 1fr; gap: 3px; }
+.cd-coords {
+  font-size: 10.5px; line-height: 1.75; color: var(--ink-dim);
+  background: var(--panel-2); border: 1px solid var(--line-soft);
+  border-radius: 3px; padding: 7px 9px; margin-top: 2px;
+}
+.cd-coords b { color: var(--ink); font-weight: 500; }
+dialog menu {
+  display: flex; gap: 8px; align-items: center; margin: 0;
+  padding: 11px 16px; border-top: 1px solid var(--line); background: var(--panel-2);
+}
+
+.pd-ds-drop {
+  margin-left: auto; font-size: 10px; line-height: 1; padding: 3px 6px;
+  color: var(--ink-faint); border-color: transparent; background: transparent;
+}
+.pd-ds-drop:hover { color: var(--danger); border-color: #40292a; }
+.pd-ds-drop.armed { color: var(--danger); border-color: var(--danger); }
+
+/* ---- projects dialog ---- */
+#projects-dialog { max-width: min(760px, calc(100vw - 32px)); }
+#projects-dialog > form > .hint { padding: 12px 18px 0; margin: 0; }
+#pm-list {
+  list-style: none; margin: 12px 18px 16px; padding: 0;
+  max-height: 58vh; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+}
+#pm-list .none { display: block; padding: 14px; color: var(--ink-faint); font-size: 11.5px; }
+.pm-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center;
+  padding: 9px 12px; border-bottom: 1px solid var(--line-soft);
+}
+.pm-row:last-child { border-bottom: 0; }
+.pm-row.open { background: var(--panel); box-shadow: inset 3px 0 0 var(--accent); }
+.pm-name { font-size: 12.5px; font-weight: 600; }
+.pm-name .tag {
+  margin-left: 8px; font: 600 9px/1 var(--sans); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--accent);
+}
+.pm-sub { grid-column: 1; font-size: 11px; color: var(--ink-dim); }
+.pm-sub .sep { color: var(--ink-faint); margin: 0 6px; }
+.pm-acts { grid-row: 1 / span 2; display: flex; gap: 6px; }
+.pm-acts button { font-size: 11px; padding: 3px 9px; }
+.pm-edit { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; padding-top: 4px; }
+.pm-edit input { flex: 1; font-size: 12px; }
+.pm-warn { grid-column: 1 / -1; font-size: 11px; color: var(--warn); padding-top: 2px; }
+
+/* ---- add-a-recording dialog ---- */
+#recording-dialog { max-width: min(700px, calc(100vw - 32px)); }
+#recording-dialog > form > .hint { padding: 12px 18px 0; margin: 0 0 10px; }
+#recording-dialog .browse { padding: 0 18px; }
+#rec-list {
+  list-style: none; margin: 0; padding: 0;
+  height: 260px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+}
+#rec-list .none { padding: 10px; color: var(--ink-faint); font-size: 11px; display: block; }
+.rec-take { padding: 14px 18px 4px; display: flex; flex-direction: column; gap: 10px; }
+.rec-take .field.wide { grid-template-columns: 64px 1fr; }
+.rec-modes { display: flex; flex-direction: column; gap: 5px; }
+.rec-modes .check { align-items: flex-start; font-size: 11.5px; line-height: 1.45; }
+.rec-modes .check input { margin-top: 2px; }
+.rec-modes b { color: var(--ink); font-weight: 600; }
+#rec-note { margin: 0 0 8px; }
+.br-take {
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+  border-radius: 3px; font-size: 10.5px; padding: 2px 8px; cursor: pointer;
+}
+.br-take:hover { border-color: var(--accent); color: var(--accent); }
+.br.sel .br-take { border-color: #fff; color: #fff; }
+
+/* ---- project dialog ---- */
+.pd-body { display: grid; grid-template-columns: 320px 340px; gap: 20px; padding: 16px; }
+.pd-col { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.pd-col .field.wide { grid-template-columns: 84px 1fr; }
+.pd-col h4 {
+  margin: 4px 0 0; font: 600 10px/1 var(--sans);
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+}
+.pd-col .hint { margin: 0; }
+.pd-crs {
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--line-soft); border-radius: 3px;
+  padding: 8px 10px; background: var(--panel-2); max-height: 190px; overflow-y: auto;
+}
+.pd-crs label { display: flex; align-items: baseline; gap: 7px; font-size: 12px; cursor: pointer; }
+.pd-crs .epsg { font: 10px/1.4 var(--mono); color: var(--ink-faint); margin-left: auto; }
+.pd-crs .none { color: var(--ink-faint); font-size: 11px; }
+
+/* ---- project tree ---- */
+#tree { list-style: none; margin: 0; padding: 0; }
+#tree .none { color: var(--ink-faint); font-size: 11px; padding: 2px 0 4px; display: block; }
+#tree-hint { margin: 8px 0 0; }
+
+li.t-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 4px; border-radius: 4px;
+  touch-action: none; user-select: none;
+}
+li.t-row:hover { background: rgba(255,255,255,.045); }
+li.t-child { padding-left: 18px; }
+li.t-recording { margin-top: 3px; }
+li.t-recording .t-name { font-weight: 600; }
+li.t-row.dragging { opacity: .4; }
+li.t-row.over-top    { box-shadow: inset 0 2px 0 var(--accent); }
+li.t-row.over-bottom { box-shadow: inset 0 -2px 0 var(--accent); }
+li.t-row.waiting .t-name { color: var(--ink-faint); font-style: italic; }
+/* Its own box is still ticked; something above it is not. Dimmed rather than
+   unticked, because the row's own setting is the operator's and is waiting
+   there for the parent to come back on. */
+li.t-row.t-hidden .t-name,
+li.t-row.t-hidden .t-kind { opacity: .38; }
+li.t-row.t-hidden .t-swatch { opacity: .3; }
+li.t-row.waiting .t-kind { color: var(--warn); border-color: var(--warn); }
+
+.t-grip { color: var(--ink-faint); cursor: grab; font-size: 12px; line-height: 1; }
+.t-grip:hover { color: var(--ink); }
+li.t-row.dragging .t-grip { cursor: grabbing; }
+.t-twist {
+  width: 11px; flex: none; text-align: center;
+  color: var(--ink-faint); font-size: 9px; cursor: pointer;
+}
+.t-twist:hover { color: var(--ink); }
+.t-swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.t-name {
+  flex: 1; min-width: 0; font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.t-kind {
+  font-family: var(--mono); font-size: 9px; color: var(--ink-faint);
+  border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; flex: none;
+}
+.t-gear {
+  flex: none; padding: 0 4px; font-size: 11px; line-height: 16px;
+  opacity: 0; transition: opacity .12s;
+}
+li.t-row:hover .t-gear { opacity: .8; }
+.t-gear:hover { opacity: 1 !important; }
+
+/* ---- layer settings dialog ---- */
+#layer-dialog { max-width: 600px; }
+/* The dialog itself has no padding -- the title bar and the button row carry
+   their own -- so everything between them has to supply it, or the fields and
+   their hints run into the edge of the window. */
+#layer-dialog #ld-info { padding: 12px 20px 0; }
+#layer-dialog #ld-info:empty { padding: 0; }
+.ld-body {
+  margin: 0; max-height: 62vh; overflow-y: auto; padding: 14px 20px 18px;
+}
+.ld-body > *:first-child { margin-top: 0; }
+.ld-body h4 {
+  margin: 20px 0 6px; font: 600 10px/1 var(--sans);
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+}
+.ld-body > .hint { margin-bottom: 10px; }
+.ld-field { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 9px; }
+.ld-field > span {
+  width: 106px; flex: none; font-size: 11px; color: var(--ink-dim);
+  padding-top: 5px; text-align: right;
+}
+.ld-control { flex: 1; min-width: 0; }
+.ld-control > input, .ld-control > select { width: 100%; }
+.ld-control input[type=color] { width: 46px; height: 24px; padding: 1px; }
+.ld-control .hint { margin: 3px 0 0; }
+.ld-control .hint.warn { color: var(--warn); }
+.ld-slider { display: flex; align-items: center; gap: 8px; }
+.ld-slider input { flex: 1; accent-color: var(--accent); margin: 0; }
+.ld-slider em {
+  font-family: var(--mono); font-size: 10px; color: var(--ink-dim);
+  font-style: normal; width: 40px; text-align: right;
+}
+.ld-ramp { display: flex; align-items: center; gap: 8px; }
+.ld-ramp select { flex: 1; min-width: 0; }
+.ld-swatch { width: 72px; height: 14px; border-radius: 2px; flex: none; border: 1px solid var(--line); }
+.ld-range { display: flex; gap: 8px; }
+.ld-range input { flex: 1; min-width: 0; }
+
+.pd-ds-drop {
+  margin-left: auto; font-size: 10px; line-height: 1; padding: 3px 6px;
+  color: var(--ink-faint); border-color: transparent; background: transparent;
+}
+.pd-ds-drop:hover { color: var(--danger); border-color: #40292a; }
+.pd-ds-drop.armed { color: var(--danger); border-color: var(--danger); }
+
+/* ---- projects dialog ---- */
+#projects-dialog { max-width: min(760px, calc(100vw - 32px)); }
+#projects-dialog > form > .hint { padding: 12px 18px 0; margin: 0; }
+#pm-list {
+  list-style: none; margin: 12px 18px 16px; padding: 0;
+  max-height: 58vh; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+}
+#pm-list .none { display: block; padding: 14px; color: var(--ink-faint); font-size: 11.5px; }
+.pm-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center;
+  padding: 9px 12px; border-bottom: 1px solid var(--line-soft);
+}
+.pm-row:last-child { border-bottom: 0; }
+.pm-row.open { background: var(--panel); box-shadow: inset 3px 0 0 var(--accent); }
+.pm-name { font-size: 12.5px; font-weight: 600; }
+.pm-name .tag {
+  margin-left: 8px; font: 600 9px/1 var(--sans); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--accent);
+}
+.pm-sub { grid-column: 1; font-size: 11px; color: var(--ink-dim); }
+.pm-sub .sep { color: var(--ink-faint); margin: 0 6px; }
+.pm-acts { grid-row: 1 / span 2; display: flex; gap: 6px; }
+.pm-acts button { font-size: 11px; padding: 3px 9px; }
+.pm-edit { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; padding-top: 4px; }
+.pm-edit input { flex: 1; font-size: 12px; }
+.pm-warn { grid-column: 1 / -1; font-size: 11px; color: var(--warn); padding-top: 2px; }
+
+/* ---- add-a-recording dialog ---- */
+#recording-dialog { max-width: min(700px, calc(100vw - 32px)); }
+#recording-dialog > form > .hint { padding: 12px 18px 0; margin: 0 0 10px; }
+#recording-dialog .browse { padding: 0 18px; }
+#rec-list {
+  list-style: none; margin: 0; padding: 0;
+  height: 260px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+}
+#rec-list .none { padding: 10px; color: var(--ink-faint); font-size: 11px; display: block; }
+.rec-take { padding: 14px 18px 4px; display: flex; flex-direction: column; gap: 10px; }
+.rec-take .field.wide { grid-template-columns: 64px 1fr; }
+.rec-modes { display: flex; flex-direction: column; gap: 5px; }
+.rec-modes .check { align-items: flex-start; font-size: 11.5px; line-height: 1.45; }
+.rec-modes .check input { margin-top: 2px; }
+.rec-modes b { color: var(--ink); font-weight: 600; }
+#rec-note { margin: 0 0 8px; }
+.br-take {
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+  border-radius: 3px; font-size: 10.5px; padding: 2px 8px; cursor: pointer;
+}
+.br-take:hover { border-color: var(--accent); color: var(--accent); }
+.br.sel .br-take { border-color: #fff; color: #fff; }
+
+/* ---- project dialog ---- */
+#project-dialog { max-width: 860px; }
+.pd-datasets { max-height: 46vh; overflow-y: auto; }
+.pd-ds {
+  border: 1px solid var(--line-soft); border-radius: 5px;
+  margin-bottom: 6px; padding: 6px 8px; opacity: .55;
+}
+.pd-ds.on { opacity: 1; border-color: var(--line); background: rgba(255,255,255,.02); }
+.pd-ds-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.pd-ds-name { flex: 1; font-size: 12px; }
+.pd-ds-nav {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px;
+  margin: 7px 0 1px 22px;
+}
+.pd-ds:not(.on) .pd-ds-nav { display: none; }
+.pd-ds-nav .field > span { font-size: 9px; width: 58px; }
+.pd-ds-nav input, .pd-ds-nav select { width: 100%; min-width: 0; }
+
+/* ---- file browser ---- */
+#import-dialog { max-width: 640px; }
+.browse { margin-top: 10px; }
+.browse-path { display: flex; gap: 6px; margin-bottom: 6px; }
+.browse-path input { flex: 1; font-family: var(--mono); font-size: 11px; }
+#im-list {
+  list-style: none; margin: 0; padding: 0;
+  height: 300px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+}
+#im-list .none { padding: 10px; color: var(--ink-faint); font-size: 11px; display: block; }
+.br {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 9px; cursor: pointer; font-size: 11.5px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.br:hover { background: var(--panel); }
+.br.sel { background: var(--accent-dim); color: #fff; }
+.br-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.br-right { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+.br-dir .br-name { color: var(--ink); }
+.br-raster .br-name::before { content: "▤ "; color: var(--accent); }
+.br-vector .br-name::before { content: "⤳ "; color: var(--warn); }
+#im-chosen { margin-top: 6px; min-height: 14px; word-break: break-all; }
+li.layer.waiting .l-name { color: var(--ink-faint); font-style: italic; }
+li.layer.waiting .l-kind { color: var(--warn); border-color: var(--warn); }
+#layer-readout { color: var(--accent); white-space: nowrap; }
+
+/* ---- report dialog ---- */
+#report-dialog { width: min(660px, 92vw); }
+.rd-top {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 0 10px; border-bottom: 1px solid var(--line);
+}
+.rd-body { max-height: 52vh; overflow-y: auto; padding: 4px 0 2px; }
+.rd-body h4 {
+  font: 600 10px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-dim); margin: 14px 0 4px;
+}
+.rd-body h4:first-child { margin-top: 4px; }
+.rd-body .none { color: var(--ink-faint); font-size: 11px; }
+.rd-chart { border-radius: 4px; }
+.rd-chart.off { opacity: .45; }
+.rd-head { display: flex; align-items: center; gap: 6px; padding: 3px 4px; }
+.rd-head:hover { background: rgba(255,255,255,.045); }
+.rd-name { font-size: 11.5px; }
+.rd-sub {
+  flex: 1; min-width: 0; font-family: var(--mono); font-size: 9.5px;
+  color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rd-layers {
+  margin: 0 0 6px 26px; padding: 4px 0 4px 10px;
+  border-left: 1px solid var(--line);
+}
+.rd-layer { display: flex; align-items: center; gap: 10px; padding: 1px 0; }
+.rd-layer > .check:first-child { flex: 1; min-width: 0; }
+.rd-layer > .check:not(:first-child) { color: var(--ink-faint); font-size: 11px; }
+
+/* Two snapshots per contact: chart and sonar, stacked in the dialog. */
+/* Two by two: bands across, views down, so the pair being compared is always
+   side by side. A column of four would push the sonar crops off the bottom of
+   the dialog, which is where the shadow is. */
+.cd-snaps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start; }
+.cd-snaps .cd-snap canvas { width: 280px; height: 280px; display: block; }
+.cd-snap.empty::after {
+  content: 'no crop for this band'; position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; color: var(--ink-faint); pointer-events: none;
+}

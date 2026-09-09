@@ -1,0 +1,40 @@
+# This repository is the application and nothing else. The workspace it
+# operates on is not part of it.
+
+# The workspace. Point the app at a folder holding these and it fills them in:
+# the recordings you give it, everything it derives from them, and the jobs
+# themselves. projects/ carries client names, operator notes and contact
+# positions, none of which are ours to publish.
+/data/
+/out/
+/projects/
+
+# Recordings, wherever they are dropped. Gigabyte-scale sonar; never a commit.
+*.jsf
+*.xtf
+
+# Derived products: the ping index, the mosaic, an imported layer. All rebuilt
+# from the recordings by the app. The wp* spellings predate the rename and are
+# still read, so a workspace that has them is still a workspace.
+*.swi
+*.swm
+*.swl
+*.wpi
+*.wpm
+*.wpl
+
+# Rust build output. 1.9 GB and entirely derived; `cargo build` remakes it.
+/target/
+
+# Tauri's generated schemas and capability files, written by tauri-build.
+/crates/swath-app/gen/
+
+# Atomic-write leftovers. A .tmp is renamed over the target; a .bak is the
+# version that was replaced.
+*.bak
+*.tmp
+
+# Editor and OS.
+/.vscode/
+.idea/
+.DS_Store

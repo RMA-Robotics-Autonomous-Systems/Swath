@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>swath</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header id="bar">
+  <div class="brand"><span class="mark"></span>swath</div>
+
+  <div class="group">
+    <label class="field">
+      <span>Project</span>
+      <select id="project"></select>
+    </label>
+    <button id="new-project" title="New project">+</button>
+    <button id="manage-projects" title="Open, rename, copy or delete a project">Projects…</button>
+    <button id="project-settings" title="Project details and report settings">Details…</button>
+  </div>
+
+  <div class="group" id="tools">
+    <button data-tool="pan"     class="tool on" title="Pan (V)">Pan</button>
+    <button data-tool="mark"    class="tool" title="Mark a contact (M)">Mark</button>
+    <button data-tool="measure" class="tool" title="Measure (R)">Measure</button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="group">
+    <label class="field">
+      <span>Basemap</span>
+      <select id="basemap">
+        <option value="osm">OpenStreetMap</option>
+        <option value="osmde">OSM (de)</option>
+        <option value="topo">OpenTopoMap</option>
+        <option value="none">None</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="seamark" checked> Seamarks</label>
+    <label class="check" title="Scrolling the waterfall pans the chart, and moving the chart scrolls the waterfall">
+      <input type="checkbox" id="link-views" checked> Link views</label>
+  </div>
+
+  <div class="group">
+    <button id="open-report">Report</button>
+  </div>
+</header>
+
+<main>
+  <aside id="left">
+    <section class="panel" id="tree-panel">
+      <h2>Project
+        <button id="refresh" class="mini" title="Rescan data/ for recordings">↻</button>
+        <div class="spacer"></div>
+        <button id="add-recording" class="mini" title="Add a recording from anywhere on disk">Recording…</button>
+        <button id="add-layer" class="mini" title="Import a GeoTIFF or GPX file">File…</button>
+      </h2>
+      <ul id="tree"></ul>
+      <p class="hint" id="tree-hint">Top of the list draws over the rest. Drag to
+      reorder; the gear on a row opens its settings.</p>
+    </section>
+
+    <section class="panel grow" id="contacts-panel">
+      <h2>Contacts <span id="contact-count" class="count">0</span></h2>
+      <ul id="contacts"></ul>
+    </section>
+  </aside>
+
+  <div id="map-wrap">
+    <canvas id="map"></canvas>
+    <div id="map-overlay">
+      <div id="scalebar"><div class="bar"></div><span></span></div>
+      <div id="north">N</div>
+    </div>
+    <div id="map-hint" class="hint-bubble"></div>
+  </div>
+
+  <div id="splitter"></div>
+
+  <aside id="right">
+    <div class="wf-head">
+      <label class="field">
+        <span>Axis</span>
+        <select id="wf-axis" title="Slant range is what the sonar measured, water column and all. Ground range is that laid flat on the seabed, which drops the water column and is what the chart is drawn in.">
+          <option value="ground">Ground range</option>
+          <option value="slant">Slant range</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Scale</span>
+        <select id="wf-aspect">
+          <option value="true" selected>True (1:1)</option>
+          <option value="fit">One row per ping</option>
+        </select>
+      </label>
+      <label class="field narrow">
+        <span>Pings</span>
+        <select id="wf-stride" title="Keep one ping in N. Lower is more detail; higher covers more ground.">
+          <option value="1" selected>all</option>
+          <option value="2">1 in 2</option>
+          <option value="4">1 in 4</option>
+          <option value="8">1 in 8</option>
+          <option value="16">1 in 16</option>
+        </select>
+      </label>
+    </div>
+    <!-- Its own line, always present. These were in the header, empty until
+         the pointer entered the image, and appearing made the controls wrap to
+         a second row -- so the waterfall moved under the cursor that was
+         reading it. -->
+    <div class="wf-readout">
+      <span id="wf-scale" class="mono"></span>
+      <span id="wf-pos" class="mono"></span>
+      <span id="wf-more"></span>
+    </div>
+    <!-- One pane per visible mosaic layer, built in app.js. The tree is the
+         control: what is ticked on the chart is what is drawn here. -->
+    <div id="wf-wrap">
+      <div id="wf-panes"></div>
+      <input type="range" id="wf-scroll" min="0" max="1000" value="0"
+             orient="vertical" title="Scroll through the recording">
+      <div id="wf-empty" class="empty">Load a recording to see the waterfall.</div>
+    </div>
+  </aside>
+</main>
+
+<footer id="status">
+  <span id="readout" class="mono"></span>
+  <div class="spacer"></div>
+  <span id="crs-readout" class="mono"></span>
+  <div class="spacer"></div>
+  <span id="layer-readout" class="mono"></span>
+  <div class="spacer"></div>
+  <span id="msg"></span>
+</footer>
+
+<dialog id="contact-dialog">
+  <form method="dialog">
+    <h3 id="cd-title">Contact</h3>
+    <div class="cd-body">
+      <!-- Four crops: the seabed at each band and the return at each band.
+           The chart says where the thing is and what surrounds it, the
+           waterfall says what the return and its shadow look like, and having
+           each at both frequencies is what a classification is argued from -- a
+           target bright at one and absent at the other is telling you what it
+           is made of. Chart on the top row, sonar on the bottom, low frequency
+           in the left column, so the pairs read across and down. -->
+      <div class="cd-snaps">
+        <div class="cd-snap"><canvas id="cd-canvas-lf" width="360" height="360"></canvas>
+          <div class="cd-snap-label">Chart · low</div>
+        </div>
+        <div class="cd-snap"><canvas id="cd-canvas-hf" width="360" height="360"></canvas>
+          <div class="cd-snap-label">Chart · high</div>
+        </div>
+        <div class="cd-snap"><canvas id="cd-canvas-wf-lf" width="360" height="360"></canvas>
+          <div class="cd-snap-label">Sonar · low</div>
+        </div>
+        <div class="cd-snap"><canvas id="cd-canvas-wf-hf" width="360" height="360"></canvas>
+          <div class="cd-snap-label">Sonar · high</div>
+        </div>
+      </div>
+      <div class="cd-fields">
+        <label class="field wide"><span>Name</span><input id="cd-name" autocomplete="off"></label>
+        <label class="field wide"><span>Class</span>
+          <input id="cd-class" list="classes" autocomplete="off">
+          <datalist id="classes">
+            <option>debris</option><option>wreck</option><option>boulder</option>
+            <option>pipeline</option><option>cable</option><option>scour</option>
+            <option>area of interest</option><option>seabed feature</option>
+          </datalist>
+        </label>
+        <div class="two">
+          <label class="field"><span>Confidence</span>
+            <select id="cd-confidence"><option>low</option><option selected>medium</option><option>high</option></select>
+          </label>
+          <label class="field"><span>Status</span>
+            <select id="cd-status"><option>new</option><option>reviewed</option><option>rejected</option><option>for ROV</option></select>
+          </label>
+        </div>
+        <div class="two">
+          <label class="field"><span>Length</span><input type="number" step="0.1" id="cd-length"><em>m</em></label>
+          <label class="field"><span>Width</span><input type="number" step="0.1" id="cd-width"><em>m</em></label>
+        </div>
+        <label class="field wide"><span>Note</span><textarea id="cd-note" rows="3"></textarea></label>
+        <div id="cd-coords" class="cd-coords mono"></div>
+      </div>
+    </div>
+    <menu>
+      <button value="delete" id="cd-delete" class="danger">Delete</button>
+      <div class="spacer"></div>
+      <button value="cancel">Cancel</button>
+      <button value="save" id="cd-save" class="primary">Save</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="import-dialog">
+  <form method="dialog">
+    <h3>Import a layer</h3>
+    <p class="hint">GeoTIFF (<code>.tif</code>) comes in as a raster you can
+    colour and shade; a single-band grid such as a multibeam DTM keeps its
+    values, so the depth under the cursor is still a depth. GPX
+    (<code>.gpx</code>) comes in as tracks, routes and waypoints.</p>
+    <div class="browse">
+      <div class="browse-path"><input id="im-path" spellcheck="false"><button id="im-go" type="button">Go</button></div>
+      <ul id="im-list"></ul>
+      <div id="im-chosen" class="hint"></div>
+    </div>
+    <menu>
+      <div class="spacer"></div>
+      <button value="cancel">Cancel</button>
+      <button value="import" id="im-import" class="primary" disabled>Import</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="projects-dialog">
+  <form method="dialog">
+    <h3>Projects</h3>
+    <p class="hint">Everything under <code>projects/</code>. Opening one loads the
+    recordings it lists; a project only holds recordings of its own if they were
+    copied or moved in, and those are the ones deleting it would take with it.</p>
+    <ul id="pm-list"></ul>
+    <menu>
+      <button type="button" id="pm-new" class="primary">New project…</button>
+      <div class="spacer"></div>
+      <button value="cancel">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="recording-dialog">
+  <form method="dialog">
+    <h3>Add a recording</h3>
+    <p class="hint">Pick the folder holding the <code>.jsf</code> or
+    <code>.xtf</code> files. Anywhere on the machine will do — the survey drive,
+    a network share, <code>data/</code>.</p>
+    <div class="browse">
+      <div class="browse-path"><input id="rec-path" spellcheck="false"><button id="rec-go" type="button">Go</button></div>
+      <ul id="rec-list"></ul>
+    </div>
+    <div class="rec-take">
+      <label class="field wide"><span>Called</span>
+        <input id="rec-name" autocomplete="off" spellcheck="false" disabled></label>
+      <div class="rec-modes">
+        <label class="check"><input type="radio" name="rec-mode" value="link" checked>
+          <span><b>Link</b> — leave the files where they are. Costs nothing; breaks if the drive goes away.</span></label>
+        <label class="check"><input type="radio" name="rec-mode" value="copy">
+          <span><b>Copy</b> — the project gets its own. The original is untouched.</span></label>
+        <label class="check"><input type="radio" name="rec-mode" value="move">
+          <span><b>Move</b> — the project takes them. Nothing else will have them.</span></label>
+      </div>
+      <p class="hint" id="rec-note">Nothing picked yet.</p>
+    </div>
+    <menu>
+      <div class="spacer"></div>
+      <button value="cancel">Cancel</button>
+      <button type="button" id="rec-add" class="primary" disabled>Add</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="project-dialog">
+  <form method="dialog">
+    <h3 id="pd-title-h">Project</h3>
+    <div class="pd-body">
+      <div class="pd-col">
+        <label class="field wide" id="pd-name-row"><span>Name</span>
+          <input id="pd-name" autocomplete="off" spellcheck="false"></label>
+        <label class="field wide"><span>Title</span><input id="pd-title" autocomplete="off"></label>
+        <label class="field wide"><span>Client</span><input id="pd-client" autocomplete="off"></label>
+        <label class="field wide"><span>Vessel</span><input id="pd-vessel" autocomplete="off"></label>
+        <label class="field wide"><span>Operator</span><input id="pd-operator" autocomplete="off"></label>
+        <label class="field wide"><span>Job number</span><input id="pd-job" autocomplete="off"></label>
+        <label class="field wide"><span>Area</span><input id="pd-area" autocomplete="off"></label>
+        <label class="field wide"><span>Notes</span><textarea id="pd-notes" rows="3"></textarea></label>
+        <h4>Coordinate systems in the report</h4>
+        <p class="hint">WGS 84 is always the first column. Tick the grids the
+        client wants beside it; they are suggested from where the survey is.</p>
+        <div id="pd-crs" class="pd-crs"></div>
+      </div>
+      <div class="pd-col">
+        <h4>Recordings</h4>
+        <p class="hint">Tick the recordings this project covers. The navigation
+        is per recording, because the layback is a property of how that day was
+        rigged — and it is what places the imagery, so changing it repaints the
+        mosaic.</p>
+        <div id="pd-datasets" class="pd-datasets"></div>
+      </div>
+    </div>
+    <menu>
+      <div class="spacer"></div>
+      <button value="cancel">Cancel</button>
+      <button value="save" class="primary" id="pd-save">Save</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="report-dialog">
+  <form method="dialog">
+    <h3>Report</h3>
+    <p class="hint">The report keeps its own list of what to draw. The layer
+    tree is a working view — a grid switched on to check a depth stays on — and
+    a chart in a deliverable is not that. Overviews come first, one per
+    frequency band with every recording on them, then each recording with a
+    chart per band, then the contacts.</p>
+    <div class="rd-top">
+      <label class="field">
+        <span>Basemap</span>
+        <select id="rd-basemap">
+          <option value="osm">OpenStreetMap</option>
+          <option value="osmde">OSM (de)</option>
+          <option value="topo">OpenTopoMap</option>
+          <option value="none">None</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="rd-seamark" checked> Seamarks</label>
+      <label class="check"><input type="checkbox" id="rd-contacts" checked> Contacts section</label>
+      <div class="spacer"></div>
+      <button id="rd-reset" type="button" class="mini"
+              title="Forget every choice below and start from the defaults">Reset</button>
+    </div>
+    <div id="rd-body" class="rd-body"></div>
+    <menu>
+      <div class="spacer"></div>
+      <button value="cancel">Cancel</button>
+      <button value="render" class="primary">Render</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="layer-dialog">
+  <form method="dialog">
+    <h3 id="ld-title">Layer</h3>
+    <p class="hint" id="ld-info"></p>
+    <div id="ld-body" class="ld-body"></div>
+    <menu>
+      <button value="remove" id="ld-remove" class="danger">Remove</button>
+      <div class="spacer"></div>
+      <button value="cancel">Cancel</button>
+      <button value="save" class="primary">Apply</button>
+    </menu>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+[package]
+name = "swath-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sidescan survey core: JSF/XTF parsing, navigation, projection, mosaic."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+memmap2 = { workspace = true }
+rayon = { workspace = true }
+png = { workspace = true }
+miniz_oxide = { workspace = true }
+anyhow = { workspace = true }
+ureq = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

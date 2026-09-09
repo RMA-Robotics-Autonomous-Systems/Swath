@@ -1,0 +1,44 @@
+# Build and test on every push and pull request.
+#
+# Deliberately not gating on `cargo fmt --check` or `cargo clippy -D warnings`.
+# The tree does not currently satisfy either, and reformatting it wholesale to
+# turn a badge green would rewrite almost every file in the repository the week
+# it was published, which buries the history that explains why the code is the
+# way it is. They are worth doing; they are worth doing as their own change.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Only the desktop shell needs these; the library and the `swath`
+      # command build with nothing outside the crates.io graph.
+      - name: webkit2gtk, for the Tauri shell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - run: cargo build --workspace --all-targets
+      - run: cargo test --workspace
+
+  ui:
+    name: bun ui/test/run.js
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun ui/test/run.js
