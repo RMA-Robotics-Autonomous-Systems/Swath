@@ -639,3 +639,180 @@ li.layer.waiting .l-kind { color: var(--warn); border-color: var(--warn); }
   display: flex; align-items: center; justify-content: center;
   font-size: 10.5px; color: var(--ink-faint); pointer-events: none;
 }
+
+/* ---- the search planner ----
+   Magenta throughout, because that is what a planned track is drawn in on a
+   paper chart and nothing else in this application uses it. */
+:root {
+  /* The recorded line, the run-in that is not recording, and the turns. Three
+     colours rather than three dash patterns, because at survey spacing the
+     lines sit a few pixels apart and a dash pattern is not a distinction the
+     eye can make there. Kept in step with drawPlan in map.js. */
+  --plan: #ff2d95;
+  --plan-run: #ffa726;
+  --plan-turn: #93a7b8;
+}
+
+#plan-pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+#plan-pane[hidden] { display: none; }
+/* `hidden` has to beat the flex displays these carry, or switching to the
+   planner leaves the waterfall's controls stranded above it. */
+.wf-head[hidden], .wf-readout[hidden], #wf-wrap[hidden],
+#pl-spacing-row[hidden] { display: none; }
+
+.pl-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-bottom: 1px solid var(--line);
+}
+.pl-rot { display: flex; align-items: center; gap: 2px; }
+.pl-rot button {
+  padding: 2px 7px; font-size: 14px; line-height: 1;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px;
+  color: var(--ink-dim); cursor: pointer;
+}
+.pl-rot button:hover { border-color: var(--plan); color: var(--plan); }
+#pl-az-read {
+  min-width: 62px; text-align: center;
+  font-size: 15px; font-weight: 600; color: var(--plan);
+}
+
+.pl-sub {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px 4px; font-size: 11px; color: var(--ink-dim);
+  border-bottom: 1px solid var(--line-soft);
+}
+.pl-sub b { color: var(--ink); font-weight: 600; }
+.pl-tlist { list-style: none; margin: 0; padding: 2px 0; overflow-y: auto; max-height: 19vh; }
+.pl-trow {
+  display: grid; grid-template-columns: 15px 1fr auto auto; gap: 7px; align-items: center;
+  padding: 3px 10px; font-size: 12px;
+}
+.pl-trow:hover { background: var(--panel-2); }
+.pl-trow input[type=checkbox] { accent-color: var(--plan); margin: 0; }
+.pl-trow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-trow .src { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint); }
+.pl-trow .src.datum { color: var(--plan); }
+.pl-trow input[type=number] {
+  width: 58px; text-align: right; font-family: var(--mono); font-size: 11px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; padding: 1px 4px;
+  color: var(--ink);
+}
+.pl-trow.off .nm, .pl-trow.off .src { color: var(--ink-faint); }
+
+.pl-cols, .pl-row {
+  display: grid; grid-template-columns: 42px 30px 54px 52px 1fr 10px;
+  gap: 7px; align-items: center;
+}
+.pl-layers { flex-wrap: wrap; gap: 4px 9px; }
+.pl-layers .check { font-size: 11px; }
+.pl-layers .check input { accent-color: var(--plan); }
+/* Each control carries the colour it governs, so the row is the legend too. */
+.pl-key { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.pl-key::before {
+  content: ""; width: 11px; height: 3px; border-radius: 2px; flex: none;
+}
+.pl-key.line::before { background: var(--plan); }
+.pl-key.run::before  { background: var(--plan-run); }
+.pl-key.turn::before { background: var(--plan-turn); }
+.pl-key.cov::before  { background: #38c8ff; height: 8px; border-radius: 2px; opacity: .45; }
+.pl-key.line { color: var(--ink-dim); }
+.pl-cols {
+  padding: 4px 10px 3px; font-size: 9.5px; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--ink-faint);
+  border-bottom: 1px solid var(--line-soft);
+}
+.pl-list { list-style: none; margin: 0; padding: 2px 0; overflow-y: auto; max-height: 34vh; }
+.pl-row {
+  padding: 4px 10px; cursor: pointer; font-size: 12px;
+  border-left: 2px solid transparent;
+}
+.pl-row:hover { background: var(--panel-2); }
+.pl-row.on { background: rgba(240,107,184,.10); border-left-color: var(--plan); }
+.pl-az { font-family: var(--mono); font-weight: 600; color: var(--plan); }
+.pl-n, .pl-d, .pl-t { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-dim); }
+.pl-row.on .pl-n, .pl-row.on .pl-d, .pl-row.on .pl-t { color: var(--ink); }
+/* Seabed the plan does not reach. Almost always a dash, and that is the point:
+   the eye is looking for the row that is not. */
+.pl-u {
+  text-align: right; font-family: var(--mono); font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--ink-faint);
+}
+.pl-u.bad { color: var(--danger); font-weight: 600; }
+.pl-v { width: 8px; height: 8px; border-radius: 50%; justify-self: center; }
+.pl-v.good { background: var(--accent); }
+.pl-v.thin { background: var(--warn); }
+.pl-v.missed { background: var(--danger); }
+.pl-empty { padding: 14px 12px; font-size: 12px; color: var(--ink-faint); font-style: italic; }
+
+.pl-report { flex: 1; overflow-y: auto; padding: 9px 10px 12px; border-top: 1px solid var(--line); }
+.pl-kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0 0 9px; font-size: 12px; }
+.pl-kv dt { color: var(--ink-dim); }
+.pl-kv dd {
+  margin: 0; text-align: right;
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+}
+.pl-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--line); }
+.pl-bar i { display: block; height: 100%; }
+.pl-note { font-size: 11px; line-height: 1.55; color: var(--ink-faint); margin: 7px 0 0; }
+.pl-note b { color: var(--ink-dim); font-weight: 600; }
+.pl-note .good { color: var(--accent); }
+.pl-note .bad { color: var(--danger); }
+.pl-digest {
+  font-family: var(--mono); font-size: 9.5px; line-height: 1.5;
+  color: var(--ink-faint); border-top: 1px solid var(--line-soft);
+  margin-top: 10px; padding-top: 7px; word-break: break-word;
+}
+.pl-warn {
+  font-size: 11px; line-height: 1.55; color: var(--warn);
+  border-left: 2px solid var(--warn); padding-left: 8px; margin: 8px 0 0;
+}
+.pl-tg { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 10px; }
+.pl-tg th {
+  text-align: left; font-weight: 600; font-size: 9.5px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-faint);
+  padding: 0 0 3px; border-bottom: 1px solid var(--line-soft);
+}
+.pl-tg td { padding: 3px 0; border-bottom: 1px solid var(--line-soft); }
+.pl-tg td.n { text-align: right; font-family: var(--mono); }
+.pl-tg td.r { text-align: right; }
+.pl-tg tr:last-child td { border-bottom: 0; }
+.pl-pill { padding: 1px 6px; border-radius: 9px; font-size: 9.5px; font-weight: 600; }
+.pl-pill.good { background: rgba(53,184,166,.16); color: var(--accent); }
+.pl-pill.thin { background: rgba(217,128,63,.18); color: var(--warn); }
+.pl-pill.missed { background: rgba(207,91,75,.18); color: var(--danger); }
+
+.pl-export {
+  display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap;
+  padding: 7px 9px; border-top: 1px solid var(--line); background: var(--panel);
+}
+.pl-form { display: flex; align-items: center; gap: 6px; }
+.pl-form > span {
+  font: 500 10px/1 var(--sans); letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+/* One choice of three, joined into a single control. `button.on` is the
+   application's own active state, so this only has to take the seams out. */
+.pl-form .seg { display: flex; }
+.pl-form .seg button {
+  border-radius: 0; border-right-width: 0; padding: 3px 9px; font-size: 11.5px;
+}
+.pl-form .seg button:first-child { border-radius: 3px 0 0 3px; }
+.pl-form .seg button:last-child { border-radius: 0 3px 3px 0; border-right-width: 1px; }
+
+/* Spacing regimes, priced in metres so the choice is made on what it buys. */
+.pl-regime { display: flex; flex-direction: column; gap: 4px; }
+.pl-regime label {
+  display: grid; grid-template-columns: 14px 1fr; gap: 8px; align-items: start;
+  padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: 3px;
+  cursor: pointer; background: var(--panel-2);
+}
+.pl-regime label:hover { border-color: var(--line); }
+.pl-regime label:has(input:checked) { border-color: var(--accent); background: rgba(53,184,166,.07); }
+.pl-regime input { margin: 2px 0 0; accent-color: var(--accent); }
+.pl-regime span { font-size: 11px; line-height: 1.5; color: var(--ink-faint); }
+.pl-regime b { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink); }
+.pl-regime em { font-style: normal; font-family: var(--mono); color: var(--ink-dim); }
+.pl-radios { display: flex; flex-direction: column; gap: 3px; padding-top: 2px; }
+
+#cd-parsed.bad { color: var(--danger); }
+#plan-dialog { max-width: 860px; }

@@ -28,12 +28,14 @@ pub mod jsf;
 pub mod layer;
 pub mod mosaic;
 pub mod nav;
+pub mod plan;
 pub mod project;
 pub mod report;
 pub mod server;
 pub mod signal;
 pub mod tiff;
 pub mod time;
+pub mod ui;
 pub mod waterfall;
 pub mod xtf;
 

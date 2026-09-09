@@ -45,6 +45,7 @@
   </div>
 
   <div class="group">
+    <button id="open-plan" title="Plan a search over the project's datums (P)">Plan</button>
     <button id="open-report">Report</button>
   </div>
 </header>
@@ -64,7 +65,10 @@
     </section>
 
     <section class="panel grow" id="contacts-panel">
-      <h2>Contacts <span id="contact-count" class="count">0</span></h2>
+      <h2>Contacts <span id="contact-count" class="count">0</span>
+        <div class="spacer"></div>
+        <button id="new-datum" class="mini" title="Enter a position to search for">Datum…</button>
+      </h2>
       <ul id="contacts"></ul>
     </section>
   </aside>
@@ -118,6 +122,67 @@
     </div>
     <!-- One pane per visible mosaic layer, built in app.js. The tree is the
          control: what is ticked on the chart is what is drawn here. -->
+    <!-- The planner takes the waterfall's place: while planning there is no
+         recording under examination, and the chart is the thing worth keeping
+         at full size. -->
+    <div id="plan-pane" hidden>
+      <div class="pl-head">
+        <div id="pl-rot" class="pl-rot">
+          <button type="button" data-d="-1" title="Turn the plan anticlockwise">&lsaquo;</button>
+          <span id="pl-az-read" class="mono">---</span>
+          <button type="button" data-d="1" title="Turn the plan clockwise">&rsaquo;</button>
+        </div>
+        <button id="pl-fit" class="mini" title="Fit the chart to the plan">Fit</button>
+        <div class="spacer"></div>
+        <button id="pl-settings" class="mini">Settings…</button>
+      </div>
+      <!-- What the search is for. Any contact can be a target: a datum typed in
+           from a client, or something found last week that is worth another
+           look. Ticking is the answer to "how does it know?", so it is on
+           screen rather than implied by a field in a dialog. -->
+      <!-- The swatches are the legend. Three colours rather than three dash
+           patterns of one, because at survey spacing the lines sit a few pixels
+           apart and a dash pattern is not a distinction the eye can make. -->
+      <div class="pl-sub pl-layers">
+        <span class="pl-key line" title="Recording. Always drawn.">Line</span>
+        <label class="check pl-key run"><input type="checkbox" id="pl-L-run" checked> Run-in</label>
+        <label class="check pl-key turn"><input type="checkbox" id="pl-L-turn" checked> Turns</label>
+        <label class="check pl-key cov"><input type="checkbox" id="pl-L-cov" checked> Coverage</label>
+        <label class="check"><input type="checkbox" id="pl-L-num" checked> Numbers</label>
+      </div>
+      <div class="pl-sub">
+        <span>Searching for <b id="pl-tcount">0</b> of <span id="pl-ccount">0</span></span>
+        <div class="spacer"></div>
+        <button id="pl-t-all" class="mini" type="button">All</button>
+        <button id="pl-t-datums" class="mini" type="button" title="Only the positions typed in as datums">Datums</button>
+        <button id="pl-t-none" class="mini" type="button">None</button>
+      </div>
+      <ul id="pl-tlist" class="pl-tlist"></ul>
+
+      <div class="pl-cols"><span>az</span><span>lines</span><span>dist</span><span>time</span><span>unseen</span><span></span></div>
+      <ul id="pl-list" class="pl-list"></ul>
+      <div id="pl-report" class="pl-report"></div>
+      <div class="pl-export">
+        <!-- A plotter that takes a route or a track from a file, but not both,
+             is better served by the shape to follow than by legs it will not be
+             steered along. So the trace is the default and the route is the
+             special case, rather than the other way round. -->
+        <div class="pl-form">
+          <span>Write</span>
+          <div class="seg" id="pl-form">
+            <button type="button" data-v="trace" title="One track: the whole path, curves included. No waypoints, no arrival alarms.">Trace</button>
+            <button type="button" data-v="route" title="Routes the plotter sequences and gives cross-track error against. Two points a line.">Route</button>
+            <button type="button" data-v="both" title="Both, for a plotter that will take them.">Both</button>
+          </div>
+        </div>
+        <label class="check" title="The positions being searched for, as waypoints"><input type="checkbox" id="pl-wpt" checked> Targets</label>
+        <label class="check" title="Every line's start, its recording-on point and its end as waypoints. Three per line — sixty-nine pins on a twenty-three line plan."><input type="checkbox" id="pl-marks"> Line marks</label>
+        <div class="spacer"></div>
+        <button id="pl-export-one" class="mini">This one</button>
+        <button id="pl-export" class="primary">Export all</button>
+      </div>
+    </div>
+
     <div id="wf-wrap">
       <div id="wf-panes"></div>
       <input type="range" id="wf-scroll" min="0" max="1000" value="0"
@@ -177,7 +242,7 @@
             <select id="cd-confidence"><option>low</option><option selected>medium</option><option>high</option></select>
           </label>
           <label class="field"><span>Status</span>
-            <select id="cd-status"><option>new</option><option>reviewed</option><option>rejected</option><option>for ROV</option></select>
+            <select id="cd-status"><option>new</option><option>reviewed</option><option>rejected</option><option>for ROV</option><option>for search</option></select>
           </label>
         </div>
         <div class="two">
@@ -185,6 +250,22 @@
           <label class="field"><span>Width</span><input type="number" step="0.1" id="cd-width"><em>m</em></label>
         </div>
         <label class="field wide"><span>Note</span><textarea id="cd-note" rows="3"></textarea></label>
+        <!-- Typed rather than clicked. A datum arrives from a client or off the
+             bridge as a pair of numbers, and until now there was no way to put
+             one into a project at all. -->
+        <div class="two">
+          <label class="field"><span>Latitude</span>
+            <input id="cd-lat" autocomplete="off" spellcheck="false" placeholder="N5125.2300"></label>
+          <label class="field"><span>Longitude</span>
+            <input id="cd-lon" autocomplete="off" spellcheck="false" placeholder="E00309.3400"></label>
+        </div>
+        <div class="two">
+          <label class="field"><span>Search radius</span>
+            <input type="number" id="cd-radius" min="0" step="5"><em>m</em></label>
+          <label class="check" title="A position given to us rather than found in the imagery. Re-solving the navigation does not move it, and a search plan is built to go and look at it.">
+            <input type="checkbox" id="cd-datum"> Datum</label>
+        </div>
+        <p class="hint" id="cd-parsed">Degrees and decimal minutes as the plotter shows them, or decimal degrees.</p>
         <div id="cd-coords" class="cd-coords mono"></div>
       </div>
     </div>
@@ -193,6 +274,94 @@
       <div class="spacer"></div>
       <button value="cancel">Cancel</button>
       <button value="save" id="cd-save" class="primary">Save</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="plan-dialog">
+  <form method="dialog">
+    <h3>Plan settings</h3>
+    <p class="hint">Set once for the job. The azimuth is the part you iterate on,
+    and it lives in the pane rather than in here.</p>
+    <div class="pd-body">
+      <div class="pd-col">
+        <h4>Sonar</h4>
+        <div class="two">
+          <label class="field"><span>Range / side</span><input type="number" id="pl-range" min="10" max="500" step="5"><em>m</em></label>
+          <label class="field"><span>Fish altitude</span><input type="number" id="pl-alt" min="1" max="60" step="0.5"><em>m</em></label>
+        </div>
+        <label class="field wide"><span>Nadir gap</span>
+          <input type="number" id="pl-nadk" min="0" max="3" step="0.1">
+          <em>× the altitude = <b id="pl-nadir">—</b> unusable each side</em></label>
+        <p class="hint">The water column under the fish returns nothing usable. It
+        scales with how high the fish is flown, so it is set as a multiple of the
+        altitude rather than as a fixed distance — one altitude is the usual figure.</p>
+        <h4>Spacing</h4>
+        <p class="hint">Three thresholds fall out of the geometry. Each one means
+        something different on the seabed, so they are named for what they buy.</p>
+        <div id="pl-regime" class="pl-regime">
+          <label><input type="radio" name="pl-reg" value="recon">
+            <span><b>Reconnaissance <em id="pl-at-recon"></em></b>
+            One pass over each patch. Fast, and it leaves a hole under every line.</span></label>
+          <label><input type="radio" name="pl-reg" value="full">
+            <span><b>Nadir filled <em id="pl-at-full"></em></b>
+            Neighbours cover each other's nadir gap. Nothing is unseen.</span></label>
+          <label><input type="radio" name="pl-reg" value="double">
+            <span><b>Double coverage <em id="pl-at-double"></em></b>
+            Every point twice, from opposite sides. The search standard.</span></label>
+          <label><input type="radio" name="pl-reg" value="custom">
+            <span><b>Set it myself <em id="pl-at-custom"></em></b>
+            Straight from the figure below.</span></label>
+        </div>
+        <label class="field wide" id="pl-spacing-row" hidden><span>Spacing</span>
+          <input type="number" id="pl-spacing" min="5" step="5"><em>m</em></label>
+      </div>
+      <div class="pd-col">
+        <h4>Rig</h4>
+        <div class="two">
+          <label class="field"><span>Layback</span><input type="number" id="pl-lay" min="0" max="400" step="1"><em>m</em></label>
+          <label class="field"><span>GPS → tow point</span><input type="number" id="pl-gps" min="-50" max="100" step="0.5"><em>m</em></label>
+        </div>
+        <p class="hint">Waypoints steer the <b>GPS antenna</b>, and the fish is
+        <b id="pl-offset">—</b> astern of it. Every line is stretched by that much
+        so the fish, not the boat, crosses the box.</p>
+        <label class="field wide"><span>Run-in before data</span>
+          <input type="number" id="pl-runin" min="0" max="1000" step="10"><em>m</em></label>
+        <p class="hint">A towed body needs about three cable lengths to settle.
+        Behind a turn this rig is still out by 5.4 m at 25 m, 1.8 m at 100 m and
+        0.7 m past 400 m — so this is what buys a placement worth trusting.</p>
+        <div class="two">
+          <label class="field"><span>Survey speed</span><input type="number" id="pl-speed" min="1" max="12" step="0.1"><em>kn</em></label>
+          <label class="field"><span>Turn radius</span><input type="number" id="pl-turn" min="10" max="600" step="5"><em>m</em></label>
+        </div>
+        <div class="two">
+          <label class="field"><span>Turn allowance</span><input type="number" id="pl-dead" min="0" max="900" step="15"><em>seconds</em></label>
+          <label class="field"><span>Box margin</span><input type="number" id="pl-margin" min="0" max="2000" step="10"><em>metres</em></label>
+        </div>
+        <p class="hint">The turn allowance is dead time added to the estimate for
+        each turn — slowing down, coming round, lining up and letting the fish
+        settle. It changes the hours, never the geometry.</p>
+        <h4>Running</h4>
+        <div class="two">
+          <div class="field"><span>Line order</span>
+            <div id="pl-order" class="pl-radios">
+              <label class="check"><input type="radio" name="pl-ord" value="sequential"> 1, 2, 3 — 180° turns</label>
+              <label class="check"><input type="radio" name="pl-ord" value="skip"> Every k-th, then fill</label>
+            </div>
+          </div>
+          <div class="field"><span>Direction</span>
+            <div id="pl-dir" class="pl-radios">
+              <label class="check"><input type="radio" name="pl-dr" value="alternate"> Alternate</label>
+              <label class="check"><input type="radio" name="pl-dr" value="oneway"> One way only</label>
+            </div>
+          </div>
+        </div>
+        <label class="field wide"><span>Plans every</span><input type="number" id="pl-step" min="1" max="45" step="1"><em>° across the 0–90 quadrant</em></label>
+      </div>
+    </div>
+    <menu>
+      <div class="spacer"></div>
+      <button value="close" class="primary">Done</button>
     </menu>
   </form>
 </dialog>

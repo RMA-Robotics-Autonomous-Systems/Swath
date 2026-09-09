@@ -18,8 +18,11 @@ use swath_core::time::{hms, iso8601};
 const USAGE: &str = "\
 swath — sidescan survey viewer
 
-  swath serve [--root DIR] [--port N] [--ui DIR]
-      Start the viewer. Defaults to a free port on 127.0.0.1.
+  swath serve [--root DIR] [--port N] [--host ADDR] [--ui DIR] [--open]
+      Start the viewer. Defaults to a free port on 127.0.0.1. Run `swath` with
+      no arguments at all and it does this and opens a browser at it.
+      --host 0.0.0.0 lets the rest of the network in; there is no password on
+      it, so only do that on one you trust.
 
   swath index <dataset> [--root DIR] [--force]
       Build the ping index for a recording.
@@ -36,6 +39,11 @@ swath — sidescan survey viewer
 
   swath report <project> [--out FILE]
       Render the survey report as HTML.
+
+  swath plan <project> [--az DEG] [--step DEG] [--export]
+      The search plan for the project's datums. With no flags it prints every
+      azimuth in the quadrant; --az details one; --export writes the GPX set
+      into the project's exports/ directory.
 
   swath tiles [<dataset>...] [--zoom 10-18] [--layers osm,seamark]
       Pre-fetch chart tiles over the survey area so the viewer works with no
@@ -59,7 +67,7 @@ fn parse() -> Args {
     while let Some(a) = it.next() {
         if let Some(k) = a.strip_prefix("--") {
             match k {
-                "force" | "open" | "yes" => {
+                "force" | "open" | "yes" | "export" => {
                     flags.insert(k.to_string(), "1".to_string());
                 }
                 _ => {
@@ -82,7 +90,15 @@ fn root_of(a: &Args) -> PathBuf {
 }
 
 fn main() -> Result<()> {
-    let a = parse();
+    let mut a = parse();
+    // No arguments at all: start the viewer and open it. That is what
+    // double-clicking the executable does on Windows, where there is no
+    // command line to have typed a subcommand on -- and a usage screen in a
+    // console window that closes again with the process is not an answer.
+    if a.cmd.is_empty() {
+        a.flags.insert("open".to_string(), "1".to_string());
+        return serve(&a);
+    }
     match a.cmd.as_str() {
         "serve" => serve(&a),
         "index" => index(&a),
@@ -90,9 +106,10 @@ fn main() -> Result<()> {
         "layer" => layer(&a),
         "info" => info(&a),
         "report" => report(&a),
+        "plan" => plan(&a),
         "fixtures" => fixtures::run(&a.rest, &a.flags),
         "tiles" => tiles::run(&a.rest, &a.flags),
-        "" | "-h" | "--help" | "help" => {
+        "-h" | "--help" | "help" => {
             print!("{USAGE}");
             Ok(())
         }
@@ -105,25 +122,76 @@ fn main() -> Result<()> {
 
 fn serve(a: &Args) -> Result<()> {
     let root = root_of(a);
+    // The frontend is inside the executable. A directory is an override for
+    // working on the frontend itself -- `--ui` names one, and one beside the
+    // binary is picked up from a checkout -- so not finding one is the normal
+    // case for an installed copy rather than something to fail on.
     let ui_dir = match a.flags.get("ui") {
-        Some(p) => PathBuf::from(p),
-        None => swath_core::server::ui_dir()
-            .context("no frontend found beside the binary (pass --ui DIR)")?,
+        Some(p) => {
+            let p = PathBuf::from(p);
+            if !p.join("index.html").exists() {
+                bail!("no frontend at {}", p.display());
+            }
+            Some(p)
+        }
+        None => swath_core::server::ui_dir(),
     };
-    if !ui_dir.join("index.html").exists() {
-        bail!("no frontend at {} (pass --ui DIR)", ui_dir.display());
-    }
     let port: u16 = a.flags.get("port").and_then(|p| p.parse().ok()).unwrap_or(0);
-    let listener = TcpListener::bind(("127.0.0.1", port))
-        .with_context(|| format!("binding 127.0.0.1:{port}"))?;
+    // Loopback unless asked otherwise. Anything else is a decision about who
+    // can reach the workspace, so it is spelled out on the command line rather
+    // than guessed at from the environment.
+    let host = a.flags.get("host").map(String::as_str).unwrap_or("127.0.0.1");
+    let listener = TcpListener::bind((host, port))
+        .with_context(|| format!("binding {host}:{port}"))?;
     let addr = listener.local_addr()?;
-    println!("swath {} — http://{}", swath_core::VERSION, addr);
+    // `0.0.0.0` is a bind address, not somewhere to point a browser. From this
+    // machine the loopback one always works, and the line further down says
+    // what to type on another machine.
+    let shown = if addr.ip().is_unspecified() {
+        format!("127.0.0.1:{}", addr.port())
+    } else {
+        addr.to_string()
+    };
+    let url = format!("http://{shown}/");
+    println!("swath {} — {url}", swath_core::VERSION);
     println!("  workspace: {}", root.display());
-    println!("  frontend:  {}", ui_dir.display());
+    match &ui_dir {
+        Some(d) => println!("  frontend:  {}", d.display()),
+        None => println!("  frontend:  built in, {} files", swath_core::ui::FILES.len()),
+    }
+    if !addr.ip().is_loopback() {
+        match lan_address() {
+            Some(ip) => println!("  network:   http://{ip}:{}/", addr.port()),
+            None => println!("  network:   this machine's address on port {}", addr.port()),
+        }
+        println!("             no password -- whoever reaches it can change the workspace");
+    }
+    // Bound already, so a browser that gets there first waits in the backlog
+    // rather than being refused.
+    if a.flags.contains_key("open") && !swath_core::server::open_in_browser(&url) {
+        eprintln!("  (no browser opened -- the address above is the whole interface)");
+    }
 
     let server = swath_core::server::Server::new(Arc::new(State::new(root)), ui_dir);
     server.serve(listener)?;
     Ok(())
+}
+
+/// The address another machine on the network would reach this one at.
+///
+/// The routing table is asked rather than the interface list, because the
+/// interface list does not know which one matters: this machine answers to a
+/// wifi address and a docker bridge, and picking the wrong one prints a URL
+/// that quietly never connects. A connected UDP socket sends nothing -- it
+/// only makes the kernel choose a source address for that destination, which
+/// is the question being asked. The destination is in the range reserved for
+/// documentation, so it is unroutable by definition and no packet could go
+/// anywhere even if one were sent.
+fn lan_address() -> Option<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    s.connect(("192.0.2.1", 9)).ok()?;
+    let ip = s.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
 }
 
 fn dataset_arg(a: &Args) -> Result<String> {
@@ -376,6 +444,136 @@ fn info(a: &Args) -> Result<()> {
         lines.len(),
         lines.iter().map(|s| s.length_m).sum::<f64>() / 1000.0
     );
+    Ok(())
+}
+
+/// The search plan, from the command line.
+///
+/// Goes through the same routes the viewer uses, so what is printed here and
+/// what is drawn there cannot drift apart.
+fn plan(a: &Args) -> Result<()> {
+    let root = root_of(a);
+    let name = a.rest.first().cloned().context("project name required")?;
+    let state = State::new(&root);
+    let resp = swath_core::api::handle(
+        &state,
+        "POST",
+        "/api/project/open",
+        &Default::default(),
+        serde_json::to_vec(&serde_json::json!({ "name": name }))?.as_slice(),
+    );
+    if resp.status != 200 {
+        bail!("could not open project {name}");
+    }
+    if let Some(step) = a.flags.get("step").and_then(|s| s.parse::<f64>().ok()) {
+        let mut g = state.project.write().unwrap();
+        if let Some(p) = g.as_mut() {
+            p.plan.spec.step_deg = step;
+        }
+    }
+
+    // `handle` takes the path and the query separately, so a `?` here has to
+    // be split off rather than passed through as part of the path.
+    let get = |target: &str| -> serde_json::Value {
+        let (path, query) = target.split_once('?').unwrap_or((target, ""));
+        let mut q = std::collections::HashMap::new();
+        for pair in query.split('&').filter(|p| !p.is_empty()) {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            q.insert(k.to_string(), v.to_string());
+        }
+        let resp = swath_core::api::handle(&state, "GET", path, &q, &[]);
+        if resp.status != 200 {
+            eprintln!("{path}: {}", String::from_utf8_lossy(&resp.bytes()));
+            std::process::exit(1);
+        }
+        serde_json::from_slice(&resp.bytes()).unwrap_or(serde_json::Value::Null)
+    };
+
+    let head = get("/api/plan");
+    let targets = head["targets"].as_array().cloned().unwrap_or_default();
+    if targets.is_empty() {
+        bail!(
+            "nothing to search for. Add the positions as contacts -- \"Datum...\" in the viewer takes \n\
+             a typed one -- then tick them in the Plan pane. A project that has never been planned \n\
+             searches for every contact whose source is `datum`."
+        );
+    }
+    println!("{name} -- {} target{}", targets.len(), if targets.len() == 1 { "" } else { "s" });
+    for t in &targets {
+        println!(
+            "  {:<12} {:.6}, {:.6}  +/- {:.0} m",
+            t["name"].as_str().unwrap_or(""),
+            t["lat"].as_f64().unwrap_or(0.0),
+            t["lon"].as_f64().unwrap_or(0.0),
+            t["radius_m"].as_f64().unwrap_or(0.0)
+        );
+    }
+
+    if let Some(az) = a.flags.get("az").and_then(|s| s.parse::<f64>().ok()) {
+        let p = get(&format!("/api/plan/solve?az={az}"));
+        println!("\n{}", p["digest"].as_str().unwrap_or(""));
+        println!(
+            "\n  {:>5} lines, {:.0} m apart ({} outside the box)",
+            p["lines"].as_u64().unwrap_or(0),
+            p["spacing_m"].as_f64().unwrap_or(0.0),
+            p["outer_lines"].as_u64().unwrap_or(0)
+        );
+        let none = p["coverage"]["none"].as_f64().unwrap_or(0.0) * 100.0;
+        let twice = p["coverage"]["twice"].as_f64().unwrap_or(0.0) * 100.0;
+        println!("  coverage: {none:.1}% unseen, {twice:.0}% seen twice or more");
+        if p["teardrops"].as_u64().unwrap_or(0) > 0 {
+            println!(
+                "  turns: {} of {} loop out, up to {:.0} m past the ends of the lines",
+                p["teardrops"].as_u64().unwrap_or(0),
+                p["turns"].as_u64().unwrap_or(0),
+                p["overshoot_m"].as_f64().unwrap_or(0.0)
+            );
+        }
+        for t in p["targets"].as_array().cloned().unwrap_or_default() {
+            println!(
+                "  {:<12} {} look{}, {} -- {}",
+                t["name"].as_str().unwrap_or(""),
+                t["looks"].as_u64().unwrap_or(0),
+                if t["looks"].as_u64() == Some(1) { "" } else { "s" },
+                if t["both_aspects"].as_bool().unwrap_or(false) { "both aspects" } else { "one side" },
+                t["verdict"].as_str().unwrap_or("")
+            );
+        }
+    } else {
+        println!("\n   az   lines  spacing   distance       time   unseen  targets");
+        for r in head["quadrant"].as_array().cloned().unwrap_or_default() {
+            println!(
+                "  {:03.0}   {:>5}   {:>4.0} m   {:>6.2} km   {:>10}   {:>5.1}%  {}",
+                r["azimuth_deg"].as_f64().unwrap_or(0.0),
+                r["lines"].as_u64().unwrap_or(0),
+                r["spacing_m"].as_f64().unwrap_or(0.0),
+                r["distance_m"].as_f64().unwrap_or(0.0) / 1000.0,
+                swath_core::plan::hms(r["seconds"].as_f64().unwrap_or(0.0)),
+                r["coverage_none"].as_f64().unwrap_or(0.0) * 100.0,
+                r["worst"].as_str().unwrap_or("")
+            );
+        }
+    }
+
+    if a.flags.contains_key("export") {
+        let body = serde_json::json!({});
+        let resp = swath_core::api::handle(
+            &state,
+            "POST",
+            "/api/plan/export",
+            &Default::default(),
+            serde_json::to_vec(&body)?.as_slice(),
+        );
+        let status = resp.status;
+        let v: serde_json::Value = serde_json::from_slice(&resp.bytes()).unwrap_or_default();
+        if status != 200 {
+            bail!("export failed: {}", v["error"].as_str().unwrap_or("unknown"));
+        }
+        println!("\n-> {}", v["dir"].as_str().unwrap_or(""));
+        for f in v["files"].as_array().cloned().unwrap_or_default() {
+            println!("   {}", f["file"].as_str().unwrap_or(""));
+        }
+    }
     Ok(())
 }
 

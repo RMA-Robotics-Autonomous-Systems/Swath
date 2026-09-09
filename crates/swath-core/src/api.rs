@@ -20,7 +20,10 @@ use crate::index::PingIndex;
 use crate::layer::{LayerRaster, LayerStyle, Ramp};
 use crate::mosaic::{Mosaic, MosaicConfig, MosaicStyle};
 use crate::nav::{self, Nav, NavConfig, SegmentKind};
-use crate::project::{Contact, Contacts, Layer, Project, Workspace, KIND_RASTER, KIND_VECTOR};
+use crate::plan::{self, GpxOptions, PlanSpec};
+use crate::project::{
+    Contact, Contacts, Layer, PlanState, Project, Workspace, KIND_RASTER, KIND_VECTOR,
+};
 use crate::report::{self, DatasetSummary, LegendEntry, ReportInput};
 use crate::waterfall::{self, Waterfall, WaterfallRequest};
 
@@ -1113,6 +1116,48 @@ pub fn save_report(state: &State) -> Result<PathBuf, String> {
     Ok(std::fs::canonicalize(&path).unwrap_or(path))
 }
 
+
+/// The plan settings and the contacts they are for.
+///
+/// Both come out of the open project, so every plan route agrees about what is
+/// being searched for without the viewer having to send it back each time.
+fn plan_inputs(state: &State) -> Result<(PlanState, Vec<plan::Target>), &'static str> {
+    let guard = state.project.read().unwrap();
+    let Some(p) = guard.as_ref() else { return Err("no project open") };
+    let ps = p.plan.clone();
+    let targets = ps.targets_from(&state.contacts.read().unwrap().items);
+    Ok((ps, targets))
+}
+
+/// Everything a plan says about itself, once solved.
+fn plan_json(p: &plan::Plan, spec: &PlanSpec) -> Value {
+    json!({
+        "azimuth": p.azimuth_deg,
+        "lines": p.lines,
+        "outer_lines": p.outer_lines,
+        "spacing_m": p.spacing_m,
+        "spacing_requested_m": p.spacing_requested_m,
+        "range_m": p.range_m,
+        "nadir_m": p.nadir_m,
+        "skip": p.skip,
+        "box_m": [p.x1 - p.x0, p.a1 - p.a0],
+        "line_length_m": (p.a1 - p.a0) + spec.rig.run_in_m,
+        "line_distance_m": p.line_distance_m,
+        "turn_distance_m": p.turn_distance_m,
+        "distance_m": p.distance_m,
+        "seconds": p.seconds,
+        "turns": p.turns.len(),
+        "teardrops": p.teardrops,
+        "overshoot_m": p.overshoot_m,
+        "turn_room_m": 2.0 * spec.rig.turn_radius_m,
+        "coverage": p.coverage,
+        "targets": p.targets,
+        "bounds": p.bounds(),
+        "digest": p.digest(spec),
+        "name": p.default_name(),
+    })
+}
+
 pub fn handle(
     state: &State,
     method: &str,
@@ -2024,6 +2069,150 @@ pub fn handle(
                 })
                 .collect();
             Response::json(json!({ "ramps": out }))
+        }
+
+        // ---- the search plan ----
+        //
+        // Only 0 to 90 degrees is ever generated, and that is the whole answer
+        // rather than a shortcut: a box run at 100 degrees is the same set of
+        // lines as one run at 10, turned round.
+        ("GET", ["api", "plan"]) => {
+            let (ps, targets) = match plan_inputs(state) {
+                Ok(v) => v,
+                Err(e) => return Response::err(400, e),
+            };
+            Response::json(json!({
+                "spec": ps.spec,
+                // Null until the planner has been opened: the viewer needs to
+                // tell "never chosen" from "chosen nothing" to tick the boxes.
+                "target_ids": ps.targets,
+                "targets": targets,
+                "quadrant": plan::quadrant(&ps.spec, &targets),
+            }))
+        }
+        ("POST", ["api", "plan"]) => {
+            let Ok(next) = serde_json::from_slice::<PlanState>(body) else {
+                return Response::err(400, "bad plan");
+            };
+            let mut guard = state.project.write().unwrap();
+            let Some(p) = guard.as_mut() else {
+                return Response::err(400, "no project open");
+            };
+            p.plan = next;
+            let path = state.ws.project_path(&p.name);
+            if let Err(e) = p.save(&path) {
+                return Response::err(500, e.to_string());
+            }
+            let spec = p.plan.spec;
+            let ids = p.plan.targets.clone();
+            drop(guard);
+            let targets = PlanState { spec, targets: ids.clone() }
+                .targets_from(&state.contacts.read().unwrap().items);
+            Response::json(json!({
+                "spec": spec,
+                "target_ids": ids,
+                "targets": targets,
+                "quadrant": plan::quadrant(&spec, &targets),
+            }))
+        }
+        // One azimuth, solved: the numbers for the report and the geometry for
+        // the chart, which is GeoJSON so the viewer draws it with the code that
+        // already draws every other vector layer.
+        ("GET", ["api", "plan", "solve"]) => {
+            let (ps, targets) = match plan_inputs(state) {
+                Ok(v) => v,
+                Err(e) => return Response::err(400, e),
+            };
+            let az: f64 = q_num(q, "az").unwrap_or(0.0);
+            let Some(p) = plan::solve(&ps.spec, &targets, az) else {
+                return Response::err(400, "nothing to search for");
+            };
+            let mut out = plan_json(&p, &ps.spec);
+            if let Some(o) = out.as_object_mut() {
+                o.insert("geojson".into(), p.to_geojson());
+            }
+            Response::json(out)
+        }
+        // Write the chosen azimuths into the project's `exports/` directory,
+        // one GPX each. The files are the deliverable; importing them back as
+        // layers is a separate step the viewer takes, so a plan on the chart is
+        // the same kind of object as any other imported track.
+        ("POST", ["api", "plan", "export"]) => {
+            let Some(project) = state.project_name() else {
+                return Response::err(400, "no project open");
+            };
+            let (ps, targets) = match plan_inputs(state) {
+                Ok(v) => v,
+                Err(e) => return Response::err(400, e),
+            };
+            if targets.is_empty() {
+                return Response::err(400, "nothing to search for");
+            }
+            let v: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+            let azimuths: Vec<f64> = v
+                .get("azimuths")
+                .and_then(|a| a.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
+                .filter(|a: &Vec<f64>| !a.is_empty())
+                .unwrap_or_else(|| plan::quadrant(&ps.spec, &targets).iter().map(|r| r.azimuth_deg).collect());
+            let flag = |k: &str, d: bool| v.get(k).and_then(|b| b.as_bool()).unwrap_or(d);
+            let opts = GpxOptions {
+                // The trace is the default deliverable: a plotter that takes
+                // only one of the two is better served by the shape to follow
+                // than by legs it will not be steered along.
+                track: flag("track", true),
+                routes: flag("routes", false),
+                route_per_line: flag("route_per_line", false),
+                turn_points: flag("turn_points", false),
+                targets: flag("targets", true),
+                line_waypoints: flag("line_waypoints", false),
+                name: String::new(),
+            };
+
+            let dir = state.ws.exports_dir(&project);
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                return Response::err(500, e.to_string());
+            }
+            let mut written = Vec::new();
+            let mut index = String::from("SEARCH PLAN\n===========\n\n");
+            index.push_str(&format!("Targets ({}):\n", targets.len()));
+            for t in &targets {
+                index.push_str(&format!(
+                    "  {:<12} {:.6}, {:.6}  +/- {:.0} m\n",
+                    t.name, t.lat, t.lon, t.radius_m
+                ));
+            }
+            index.push('\n');
+            for az in azimuths {
+                let Some(p) = plan::solve(&ps.spec, &targets, az) else { continue };
+                let g = p.to_gpx(&ps.spec, &targets, &opts);
+                let file = format!("{}.gpx", safe_name(&g.name));
+                let path = dir.join(&file);
+                if let Err(e) = crate::gpx::save(&path, &g) {
+                    return Response::err(500, format!("{file}: {e}"));
+                }
+                index.push_str(&format!("{file}\n  {}\n", p.digest(&ps.spec)));
+                index.push_str(&format!(
+                    "  coverage: {:.1}% unseen, {:.0}% seen twice or more\n\n",
+                    p.coverage.none * 100.0,
+                    p.coverage.twice * 100.0
+                ));
+                written.push(json!({
+                    "file": file,
+                    "path": path.display().to_string(),
+                    "azimuth": p.azimuth_deg,
+                    "name": g.name,
+                }));
+            }
+            index.push_str(
+                "Waypoints are GPS ANTENNA positions; the fish is astern by the layback above.\n\
+                 Recording starts at the A point of each line, not the S.\n",
+            );
+            let _ = std::fs::write(dir.join("search-plan.txt"), index);
+            Response::json(json!({
+                "dir": dir.display().to_string(),
+                "files": written,
+            }))
         }
 
         // ---- contacts ----

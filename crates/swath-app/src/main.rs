@@ -22,13 +22,9 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
     let root = workspace_root();
-    let ui_dir = match swath_core::server::ui_dir() {
-        Some(d) => d,
-        None => {
-            eprintln!("no frontend found beside the binary");
-            std::process::exit(1);
-        }
-    };
+    // None means the copy built into the binary, which is the usual case for
+    // an installed shell; a directory found beside it wins, for a checkout.
+    let ui_dir = swath_core::server::ui_dir();
 
     // Port 0: the OS picks a free one. Binding before the window is built so
     // the address is known by the time the webview needs it.

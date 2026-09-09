@@ -29,6 +29,13 @@ pub struct Point {
     /// Unix seconds, where the file carries a timestamp.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<f64>,
+    /// A route point's name. Track points do not carry one, but route points
+    /// do and a plotter shows it: dropping it turned a named line list into an
+    /// anonymous polyline the moment it was read back.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub desc: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -51,6 +58,10 @@ pub struct Waypoint {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Gpx {
     pub name: String,
+    /// Free text on the file as a whole. A plan writes the settings it was
+    /// solved from here, so a file found later says what it came from.
+    #[serde(default)]
+    pub desc: String,
     pub tracks: Vec<Line>,
     pub routes: Vec<Line>,
     pub waypoints: Vec<Waypoint>,
@@ -61,6 +72,7 @@ impl Default for Gpx {
     fn default() -> Gpx {
         Gpx {
             name: String::new(),
+            desc: String::new(),
             tracks: Vec::new(),
             routes: Vec::new(),
             waypoints: Vec::new(),
@@ -138,6 +150,105 @@ impl Gpx {
             "features": features,
         })
     }
+}
+
+/// GPX 1.1 for a `Gpx`, ready to write to a file.
+///
+/// The inverse of `parse` for everything this type can hold: what comes out of
+/// `parse(&write(&g))` is `g` again, which is the only useful definition of a
+/// writer that is worth having. Coordinates go out at seven decimals -- about a
+/// centimetre, which is finer than anything here knows and coarse enough not to
+/// print seventeen digits of float noise.
+pub fn write(g: &Gpx) -> String {
+    let mut o = String::with_capacity(4096);
+    o.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    o.push_str(&format!(
+        "<gpx version=\"1.1\" creator=\"swath {}\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n",
+        crate::VERSION
+    ));
+    if !g.name.is_empty() || !g.desc.is_empty() {
+        o.push_str("  <metadata>\n");
+        tag(&mut o, 4, "name", &g.name);
+        tag(&mut o, 4, "desc", &g.desc);
+        o.push_str("  </metadata>\n");
+    }
+    for w in &g.waypoints {
+        o.push_str(&format!("  <wpt lat=\"{:.7}\" lon=\"{:.7}\">\n", w.lat, w.lon));
+        tag(&mut o, 4, "name", &w.name);
+        tag(&mut o, 4, "desc", &w.desc);
+        if let Some(e) = w.ele {
+            o.push_str(&format!("    <ele>{e:.3}</ele>\n"));
+        }
+        o.push_str("  </wpt>\n");
+    }
+    for r in &g.routes {
+        o.push_str("  <rte>\n");
+        tag(&mut o, 4, "name", &r.name);
+        for p in &r.points {
+            point(&mut o, "rtept", p);
+        }
+        o.push_str("  </rte>\n");
+    }
+    for t in &g.tracks {
+        o.push_str("  <trk>\n");
+        tag(&mut o, 4, "name", &t.name);
+        o.push_str("    <trkseg>\n");
+        for p in &t.points {
+            point(&mut o, "trkpt", p);
+        }
+        o.push_str("    </trkseg>\n");
+        o.push_str("  </trk>\n");
+    }
+    o.push_str("</gpx>\n");
+    o
+}
+
+fn point(o: &mut String, name: &str, p: &Point) {
+    let inner = !p.name.is_empty() || !p.desc.is_empty() || p.ele.is_some() || p.time.is_some();
+    let ind = if name == "trkpt" { 6 } else { 4 };
+    let pad = " ".repeat(ind);
+    o.push_str(&format!("{pad}<{name} lat=\"{:.7}\" lon=\"{:.7}\"", p.lat, p.lon));
+    if !inner {
+        o.push_str("/>\n");
+        return;
+    }
+    o.push_str(">\n");
+    tag(o, ind + 2, "name", &p.name);
+    tag(o, ind + 2, "desc", &p.desc);
+    if let Some(e) = p.ele {
+        o.push_str(&format!("{}<ele>{e:.3}</ele>\n", " ".repeat(ind + 2)));
+    }
+    if let Some(t) = p.time {
+        o.push_str(&format!("{}<time>{}</time>\n", " ".repeat(ind + 2), crate::time::iso8601(t)));
+    }
+    o.push_str(&format!("{pad}</{name}>\n"));
+}
+
+fn tag(o: &mut String, indent: usize, name: &str, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    o.push_str(&format!("{}<{name}>{}</{name}>\n", " ".repeat(indent), escape(text)));
+}
+
+/// The five predefined XML entities. `unescape` is the inverse.
+fn escape(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => o.push_str("&amp;"),
+            '<' => o.push_str("&lt;"),
+            '>' => o.push_str("&gt;"),
+            '"' => o.push_str("&quot;"),
+            '\'' => o.push_str("&apos;"),
+            _ => o.push(c),
+        }
+    }
+    o
+}
+
+pub fn save(path: impl AsRef<Path>, g: &Gpx) -> io::Result<()> {
+    std::fs::write(path, write(g))
 }
 
 fn plural(n: usize) -> &'static str {
@@ -325,7 +436,9 @@ pub fn parse(src: &str) -> io::Result<Gpx> {
             }
             "name" if !text.is_empty() => {
                 let name = unescape(text);
-                if let Some(w) = cur_wpt.as_mut() {
+                if let Some(p) = cur_pt.as_mut() {
+                    p.name = name;
+                } else if let Some(w) = cur_wpt.as_mut() {
                     w.name = name;
                 } else if let Some(l) = cur_line.as_mut() {
                     if l.name.is_empty() {
@@ -336,10 +449,16 @@ pub fn parse(src: &str) -> io::Result<Gpx> {
                 }
             }
             "desc" | "cmt" if !text.is_empty() => {
-                if let Some(w) = cur_wpt.as_mut() {
+                if let Some(p) = cur_pt.as_mut() {
+                    if p.desc.is_empty() {
+                        p.desc = unescape(text);
+                    }
+                } else if let Some(w) = cur_wpt.as_mut() {
                     if w.desc.is_empty() {
                         w.desc = unescape(text);
                     }
+                } else if cur_line.is_none() && g.desc.is_empty() {
+                    g.desc = unescape(text);
                 }
             }
             "ele" if !text.is_empty() => {

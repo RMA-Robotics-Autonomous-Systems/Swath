@@ -4,7 +4,8 @@ import { api, tileUrl } from './api.js';
 import { MapView } from './map.js';
 import { WaterfallView, sliderRow, verticalSliderRunsDown } from './waterfall.js';
 import { installSelects } from './select.js';
-import { haversine, offset, formatDistance } from './geo.js';
+import { Planner } from './plan.js';
+import { haversine, offset, formatDistance, parseCoord, ddm } from './geo.js';
 import {
   RECORDING, MOSAIC, TRACK, RASTER, VECTOR,
   buildTree, moveWithinSiblings, dropIndex, removeNode, drawOrder, isReady,
@@ -33,6 +34,9 @@ function on(id, event, fn) {
 const PALETTE = ['#35b8a6', '#e8792f', '#8f7ae0', '#4fa3e8', '#d94f70', '#7cc45a'];
 
 const S = {
+  // The planner replaces the waterfall in the right-hand pane rather than
+  // opening a window of its own; see plan.js.
+  planning: false,
   project: null,
   datasets: [],          // from disk
   loaded: new Map(),     // name -> summary
@@ -1333,6 +1337,9 @@ async function loadContacts() {
   renderContacts();
   map.draw();
   for (const p of panes) { p.view.contacts = S.contacts; p.view.draw(); }
+  // The plan's box is built from the datums, so a datum added, moved or
+  // deleted is a different plan.
+  planContactsChanged();
 }
 
 function renderContacts() {
@@ -1374,6 +1381,26 @@ function selectContact(id) {
   map.draw();
 }
 
+/// Say what was understood, before it is saved. A transposed digit in a datum
+/// is a day at sea in the wrong place.
+function checkContactPos() {
+  const lat = parseCoord($('cd-lat').value, true);
+  const lon = parseCoord($('cd-lon').value, false);
+  const el = $('cd-parsed');
+  const ok = Number.isFinite(lat) && Number.isFinite(lon);
+  el.classList.toggle('bad', !ok);
+  if (!ok) {
+    el.textContent = (!$('cd-lat').value && !$('cd-lon').value)
+      ? 'Degrees and decimal minutes as the plotter shows them, or decimal degrees.'
+      : `Cannot read the ${!Number.isFinite(lat) && !Number.isFinite(lon) ? 'position'
+          : !Number.isFinite(lat) ? 'latitude' : 'longitude'}.`
+        + ' Try N5125.2300 and E00309.3400, or 51.4205 and 3.1556.';
+    return;
+  }
+  el.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+}
+
+
 async function openContact(seed) {
   if (!S.project) { msg('open or create a project first', 'error'); return; }
   const dlg = $('contact-dialog');
@@ -1397,6 +1424,15 @@ async function openContact(seed) {
   // Coordinates in every system the area suggests: this is the whole point of
   // the report requirement, and seeing it at mark time catches a wrong zone
   // before it reaches a deliverable.
+  // A datum is typed, not clicked, so the position is editable here. Anything
+  // marked on the imagery keeps its fields too -- a mark placed one screen-pixel
+  // out is easier to nudge as a number than to re-click.
+  $('cd-lat').value = ddm(c.lat, 'NS');
+  $('cd-lon').value = ddm(c.lon, 'EW');
+  $('cd-radius').value = c.radius_m ?? '';
+  $('cd-datum').checked = (c.source || 'map') === 'datum';
+  checkContactPos();
+
   $('cd-coords').innerHTML = 'resolving…';
   api.convert(c.lat, c.lon).then(r => {
     // The uncertainty belongs beside the coordinate, not in a footnote. Six
@@ -1663,6 +1699,16 @@ on('contact-dialog', 'close', async (e) => {
   const L = parseFloat($('cd-length').value), W = parseFloat($('cd-width').value);
   c.length_m = Number.isFinite(L) ? L : null;
   c.width_m = Number.isFinite(W) ? W : null;
+  const lat = parseCoord($('cd-lat').value, true), lon = parseCoord($('cd-lon').value, false);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) { c.lat = lat; c.lon = lon; }
+  const R = parseFloat($('cd-radius').value);
+  c.radius_m = Number.isFinite(R) ? R : 0;
+  // A datum is a position given to us rather than found, and saying so is what
+  // keeps a re-solved navigation from moving it -- and what puts it in front of
+  // the planner.
+  c.source = $('cd-datum').checked ? 'datum'
+           : (c.source === 'datum' ? 'map' : (c.source || 'map'));
+  if (c.source === 'datum' && c.shape === 'point' && c.radius_m > 0) c.shape = 'circle';
 
   try {
     const r = await api.saveContact(c);
@@ -1745,6 +1791,86 @@ function bindChrome() {
   on('project-settings', 'click', () => openProjectDialog({}));
 
   on('open-report', 'click', openReport);
+  on('open-plan', 'click', () => setPlanMode(!S.planning));
+  on('pl-settings', 'click', () => {
+    const d = $('plan-dialog');
+    d.returnValue = '';
+    d.showModal();
+  });
+  // A datum has no position until one is typed, so the dialog opens on the
+  // middle of the chart and the operator overwrites it.
+  on('new-datum', 'click', () => {
+    const c = map.centre;
+    openContact({
+      lat: c[0], lon: c[1], source: 'datum', shape: 'circle', radius_m: 50,
+      status: 'for search', class: 'datum',
+    });
+  });
+  for (const id of ['cd-lat', 'cd-lon']) on(id, 'input', checkContactPos);
+}
+
+// ---- planning --------------------------------------------------------------
+
+let planner = null;
+
+/// Swap the right-hand pane between the waterfall and the planner.
+///
+/// They are alternatives rather than neighbours: while planning there is no
+/// recording under examination, and the chart -- with the previous survey's
+/// mosaic and the seamarks on it -- is exactly what the lines have to be judged
+/// against, so it keeps its size.
+async function setPlanMode(on) {
+  S.planning = on;
+  $('open-plan').classList.toggle('on', on);
+  $('plan-pane').hidden = !on;
+  for (const el of [document.querySelector('.wf-head'), document.querySelector('.wf-readout'),
+                    $('wf-wrap')]) {
+    if (el) el.hidden = on;
+  }
+  if (!on) {
+    map.plan = null;
+    map.draw();
+    return;
+  }
+  if (!planner) {
+    planner = new Planner({
+      onplan: (gj) => { map.plan = gj; map.draw(); },
+      onmsg: (t, kind) => msg(t, kind),
+      onbounds: (b) => map.fit(b),
+      onchanged: () => loadContacts(),
+      onlayers: (f) => { map.planLayers = f; map.draw(); },
+      // The written GPX comes back in as an ordinary vector layer, so a plan
+      // on the chart is the same kind of object as an imported track and needs
+      // no drawing code of its own.
+      onimport: async (f) => {
+        try {
+          await api.importLayer(f.path, f.name);
+          await refresh();
+          msg(`${f.name} added to the project`);
+        } catch (e) {
+          msg(`could not add the plan as a layer: ${e.message}`, 'error');
+        }
+      },
+    });
+  }
+  try {
+    busy('solving the plan…');
+    planner.contacts = S.contacts;
+    await planner.load();
+    const n = planner.targets.length;
+    msg(n ? `searching for ${n} of ${S.contacts.length} contacts`
+          : S.contacts.length ? 'Tick the contacts to search for.'
+          : 'No contacts yet — “Datum…” beside Contacts takes a typed position.');
+  } catch (e) {
+    msg(`plan: ${e.message}`, 'error');
+  }
+}
+
+/// Contacts changed under the planner: the box is built from them.
+function planContactsChanged() {
+  if (!planner) return;
+  planner.contacts = S.contacts;
+  if (S.planning) planner.load().catch(() => {});
 }
 
 // ---- the report ------------------------------------------------------------
@@ -2071,6 +2197,7 @@ function bindKeys() {
     if (e.key === 'm') setTool('mark');
     if (e.key === 'r') setTool('measure');
     if (e.key === 'Escape') { setTool('pan'); }
+    if (e.key === 'p') setPlanMode(!S.planning);
     if (e.key === 'f' && S.loaded.size) {
       const b = [...S.loaded.values()].map(s => s.bounds).filter(Boolean);
       if (b.length) map.fit(b.reduce((a, x) => ({

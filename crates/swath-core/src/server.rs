@@ -14,7 +14,12 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use crate::api::{self, Response, State, TileCache};
 
-/// Where the frontend lives.
+/// A frontend directory on disk, if there is one to prefer over the built-in.
+///
+/// The frontend is compiled into the binary (see [`crate::ui`]), so `None` is
+/// the ordinary answer for a shipped executable and means nothing is missing.
+/// A directory is looked for anyway and wins when it is found, so that editing
+/// `ui/` in a checkout still shows up on reload.
 ///
 /// Deliberately not looked for under the workspace. `--root` names the folder
 /// holding the recordings, the projects and everything derived from them; it
@@ -23,16 +28,19 @@ use crate::api::{self, Response, State, TileCache};
 /// off, it found a `ui/` sitting beside the source and a workspace with no
 /// recordings in it, and nothing about that looks broken.
 ///
-/// The frontend ships with the binary, so it is found from the binary: beside
-/// it once installed, and up out of `target/<profile>/` when run from a
-/// checkout. `CARGO_MANIFEST_DIR` is the last resort, for a binary that has
-/// been copied somewhere on its own and left its `ui/` behind.
+/// So the directory is looked for from the binary: beside it when a checkout's
+/// `ui/` has been installed alongside, and up out of `target/<profile>/` when
+/// run from the tree. Nowhere else -- in particular not the source tree this
+/// was compiled in, which used to be the last resort and is now the wrong
+/// answer twice over. A copied binary would rather serve the frontend it was
+/// built with than whatever that checkout has been edited into since, and a
+/// build machine's paths have no business deciding what a shipped executable
+/// serves.
 pub fn ui_dir() -> Option<PathBuf> {
     let mut tried: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         tried.extend(exe.ancestors().skip(1).take(5).map(|d| d.join("ui")));
     }
-    tried.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui"));
     tried.into_iter().find(|c| c.join("index.html").exists())
 }
 
@@ -52,14 +60,15 @@ const FETCH_BACKLOG: usize = 96;
 
 pub struct Server {
     pub state: Arc<State>,
-    /// Directory the frontend is served from.
-    pub ui_dir: std::path::PathBuf,
+    /// Directory the frontend is served from, or `None` for the copy built
+    /// into the binary.
+    pub ui_dir: Option<std::path::PathBuf>,
     /// Base map tiles, fetched off the request path.
     fetch: Arc<Fetcher>,
 }
 
 impl Server {
-    pub fn new(state: Arc<State>, ui_dir: std::path::PathBuf) -> Arc<Server> {
+    pub fn new(state: Arc<State>, ui_dir: Option<std::path::PathBuf>) -> Arc<Server> {
         let me = Arc::new(Server { state, ui_dir, fetch: Fetcher::new() });
         me.fetch.clone().start(me.state.clone());
         me
@@ -302,27 +311,44 @@ impl Server {
         Response::pending()
     }
 
+    /// One file of the frontend.
+    ///
+    /// From the directory when there is one, and from the copy built into the
+    /// binary when there is not. A directory, once chosen, is the whole
+    /// frontend: a miss inside it is a 404 rather than a quiet fall through to
+    /// the built-in copy, which would answer an edit in progress with a file of
+    /// a different vintage and look like the edit had no effect.
     fn static_file(&self, path: &str) -> Response {
         let rel = if path == "/" { "index.html" } else { path.trim_start_matches('/') };
         // no traversal out of the ui directory
         if rel.contains("..") {
             return Response::err(400, "bad path");
         }
-        let p = self.ui_dir.join(rel);
-        let Ok(bytes) = std::fs::read(&p) else {
-            return Response::err(404, "not found");
+        let bytes = match &self.ui_dir {
+            Some(dir) => match std::fs::read(dir.join(rel)) {
+                Ok(b) => b,
+                Err(_) => return Response::err(404, "not found"),
+            },
+            None => match crate::ui::get(rel) {
+                Some(b) => b.to_vec(),
+                None => return Response::err(404, "not found"),
+            },
         };
-        let ct = match p.extension().and_then(|e| e.to_str()) {
-            Some("html") => "text/html; charset=utf-8",
-            Some("js") => "text/javascript; charset=utf-8",
-            Some("css") => "text/css; charset=utf-8",
-            Some("json") => "application/json",
-            Some("png") => "image/png",
-            Some("svg") => "image/svg+xml",
-            Some("woff2") => "font/woff2",
-            _ => "application/octet-stream",
-        };
-        Response::raw(bytes, ct, 0)
+        Response::raw(bytes, content_type(rel), 0)
+    }
+}
+
+/// What to call a file the browser asked for, by extension.
+fn content_type(rel: &str) -> &'static str {
+    match rel.rsplit_once('.').map(|(_, e)| e) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
     }
 }
 
@@ -405,15 +431,32 @@ fn write_response(stream: &mut TcpStream, resp: Response) -> std::io::Result<()>
 /// to, and that is not a failure -- the caller is told where the file is and
 /// can open it however it likes.
 fn open_externally(path: &std::path::Path) -> bool {
+    hand_to_desktop(path.as_os_str())
+}
+
+/// Hand an address to whatever the desktop opens links with.
+///
+/// The same best-effort contract as [`open_externally`], and for a sharper
+/// reason: `swath serve` may well be running on a machine whose browser is
+/// somebody else's, over the network or through a tunnel. Failing to open one
+/// locally is not a failure of the command -- the address is printed either
+/// way, and that is the part that matters.
+pub fn open_in_browser(url: &str) -> bool {
+    hand_to_desktop(url.as_ref())
+}
+
+fn hand_to_desktop(arg: &std::ffi::OsStr) -> bool {
     let cmd = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(target_os = "windows") {
+        // Also the shell's URL handler: `explorer https://...` opens the
+        // default browser, which is why this works for both callers.
         "explorer"
     } else {
         "xdg-open"
     };
     std::process::Command::new(cmd)
-        .arg(path)
+        .arg(arg)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()

@@ -992,5 +992,40 @@ group('scrollbar direction', () => {
 });
 
 
+
+
+// ---- coordinates a position is typed in as -----------------------------------
+
+group('typed coordinates', () => {
+  // Degrees and decimal minutes, as a plotter shows them. This is the only way
+  // a client's datum gets into a project, and a transposed digit is a day at
+  // sea in the wrong place -- so the awkward forms are checked, not the easy one.
+  near(geo.parseCoord('N5125.2300', true), 51.4205, 1e-9, 'packed DDM latitude');
+  near(geo.parseCoord('E00309.3400', false), 3 + 9.34 / 60, 1e-9, 'packed DDM longitude, leading zeros');
+  near(geo.parseCoord('5125.2300N', true), 51.4205, 1e-9, 'hemisphere after the number');
+  near(geo.parseCoord('N 51 25.23', true), 51.4205, 1e-9, 'spaced degrees and minutes');
+  near(geo.parseCoord('N51 25 13.8', true), 51.4205, 1e-6, 'degrees, minutes and seconds');
+  near(geo.parseCoord('51.4205', true), 51.4205, 1e-9, 'plain decimal degrees');
+  near(geo.parseCoord('3.1565', false), 3.1565, 1e-9, 'decimal degrees under four digits stay decimal');
+  near(geo.parseCoord('S3312.5000', true), -33.2083333, 1e-6, 'southern hemisphere is negative');
+  near(geo.parseCoord('W00012.0000', false), -0.2, 1e-9, 'western hemisphere is negative');
+  near(geo.parseCoord('-51.4205', true), -51.4205, 1e-9, 'a leading minus');
+
+  ok(Number.isNaN(geo.parseCoord('E5125.2300', true)), 'E in the latitude field is a typo, not a position');
+  ok(Number.isNaN(geo.parseCoord('N00309.3400', false)), 'N in the longitude field likewise');
+  ok(Number.isNaN(geo.parseCoord('5175.0000', true)), '75 minutes is not a position');
+  ok(Number.isNaN(geo.parseCoord('9500.0000', true)), 'past the pole');
+  ok(Number.isNaN(geo.parseCoord('19100.0000', false)), 'past the antimeridian');
+  ok(Number.isNaN(geo.parseCoord('', true)), 'empty');
+  ok(Number.isNaN(geo.parseCoord('abc', true)), 'not a number at all');
+
+  // What goes into the field has to come back out of it.
+  for (const [v, ns, isLat] of [[51.4205, 'NS', true], [3.1556667, 'EW', false],
+                                [-33.2083333, 'NS', true], [-0.2, 'EW', false]]) {
+    near(geo.parseCoord(geo.ddm(v, ns), isLat), v, 1e-7, `${v} survives a round trip through the field`);
+  }
+  ok(geo.ddm(51.4205, 'NS') === 'N5125.2300', `latitude formats as N5125.2300, got ${geo.ddm(51.4205, 'NS')}`);
+  ok(geo.ddm(3.1556667, 'EW') === 'E00309.3400', `longitude pads to three degrees, got ${geo.ddm(3.1556667, 'EW')}`);
+});
 console.log(`\n${checks - failures}/${checks} checks passed`);
 process.exit(failures ? 1 : 0);

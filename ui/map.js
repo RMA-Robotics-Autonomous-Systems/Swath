@@ -352,6 +352,12 @@ export class MapView {
     // show_fish } or { kind:'vector', id, colour, features }.
     this.vectors = [];
     this.contacts = [];
+    // The search plan being worked on, as GeoJSON from /api/plan/solve. Not a
+    // vector layer: it is redrawn on every drag of the azimuth and belongs to
+    // the planner rather than to the project's layer stack. A plan that has
+    // been exported and imported comes back as an ordinary vector layer.
+    this.plan = null;
+    this.planLayers = { cov: true, turn: true, run: true, num: true };
     this.selected = null;
     this.cursor = null;        // linked cursor from the waterfall
     this.viewSpan = null;      // fish track the waterfall is currently showing
@@ -501,6 +507,7 @@ export class MapView {
       else this.drawVector(l);
     }
     if (this.viewSpan) this.drawViewSpan();
+    if (this.plan) this.drawPlan();
     this.drawContacts();
     if (this.measure) this.drawMeasure();
     if (this.cursor) this.drawCursor();
@@ -587,6 +594,132 @@ export class MapView {
           ctx.fillText(name, x + 9, y + 4);
           ctx.shadowBlur = 0;
         }
+      }
+    }
+    ctx.restore();
+  }
+
+  /// The plan, drawn under the contacts it is a search for.
+  ///
+  /// Every line is drawn twice: a dark casing first, then the colour over it.
+  /// That is what keeps a plan legible over an arbitrary basemap -- offshore
+  /// OSM is a flat mid blue, and a thin magenta line on it disappears -- and it
+  /// costs one extra stroke per feature.
+  ///
+  /// The three kinds of line are three colours rather than three dash patterns
+  /// of one colour, because at survey spacing they sit a few pixels apart and a
+  /// dash pattern is not a distinction you can see there. Magenta is the
+  /// recorded line, amber the run-in and run-out that is not recording, and
+  /// grey the turns, which are transit.
+  drawPlan() {
+    const ctx = this.ctx;
+    const fc = this.plan;
+    if (!fc || !fc.features) return;
+    const L = this.planLayers || { cov: true, turn: true, run: true, num: true };
+    ctx.save();
+
+    const path = (coords, close) => {
+      ctx.beginPath();
+      coords.forEach((c, i) => {
+        const [x, y] = this.project(c[1], c[0]);
+        if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      });
+      if (close) ctx.closePath();
+    };
+    const poly = (rings) => {
+      ctx.beginPath();
+      for (const ring of rings) {
+        ring.forEach((c, i) => {
+          const [x, y] = this.project(c[1], c[0]);
+          if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        });
+        ctx.closePath();
+      }
+    };
+    /// Casing under colour, both from one path.
+    const cased = (coords, colour, width, dash) => {
+      path(coords, false);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(6,10,14,.72)';
+      ctx.lineWidth = width + 2.2;
+      ctx.stroke();
+      ctx.setLineDash(dash || []);
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    for (const f of fc.features) {
+      const k = f.properties?.kind;
+      const g = f.geometry;
+      if (!g || g.type !== 'Polygon') continue;
+      if (k === 'swath' && L.cov) {
+        ctx.globalAlpha = 0.10; ctx.fillStyle = '#38c8ff';
+        poly(g.coordinates); ctx.fill();
+      } else if (k === 'gap') {
+        // Always drawn, whatever the coverage layer is doing: a hole is the one
+        // thing on this chart nobody should have to switch on to find out about.
+        ctx.globalAlpha = 0.5; ctx.fillStyle = '#ff3b30';
+        poly(g.coordinates); ctx.fill();
+      } else if (k === 'box') {
+        ctx.globalAlpha = 1;
+        ctx.setLineDash([6, 5]);
+        ctx.strokeStyle = 'rgba(6,10,14,.6)'; ctx.lineWidth = 3;
+        poly(g.coordinates); ctx.stroke();
+        ctx.strokeStyle = '#cbd8e4'; ctx.lineWidth = 1;
+        poly(g.coordinates); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // Turns first, then run-ins, then the recorded lines on top: the line that
+    // matters is the one that must not be crossed out by anything else.
+    if (L.turn) {
+      for (const f of fc.features) {
+        if (f.properties?.kind !== 'turn' || f.geometry?.type !== 'LineString') continue;
+        cased(f.geometry.coordinates, '#93a7b8', 1.3, [4, 4]);
+      }
+    }
+    if (L.run) {
+      for (const f of fc.features) {
+        if (f.properties?.kind !== 'runin' || f.geometry?.type !== 'LineString') continue;
+        cased(f.geometry.coordinates, '#ffa726', 1.6, [5, 4]);
+      }
+    }
+    for (const f of fc.features) {
+      if (f.properties?.kind !== 'line' || f.geometry?.type !== 'LineString') continue;
+      const c = f.geometry.coordinates;
+      cased(c, '#ff2d95', 2.2);
+      const [ax, ay] = this.project(c[0][1], c[0][0]);
+      const [bx, by] = this.project(c[1][1], c[1][0]);
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len < 26) continue;
+      // A head at the middle, so which way the line is run is readable without
+      // counting from the ends.
+      const mx = (ax + bx) / 2, my = (ay + by) / 2;
+      const a = Math.atan2(by - ay, bx - ax);
+      ctx.beginPath();
+      ctx.moveTo(mx + 7 * Math.cos(a), my + 7 * Math.sin(a));
+      ctx.lineTo(mx - 5 * Math.cos(a - 0.55), my - 5 * Math.sin(a - 0.55));
+      ctx.lineTo(mx - 5 * Math.cos(a + 0.55), my - 5 * Math.sin(a + 0.55));
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(6,10,14,.72)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#ff2d95'; ctx.fill();
+      // Numbers only where they will not collide: at survey spacing the labels
+      // are closer together than they are tall.
+      if (L.num && len > 60 && this.metresPerPixel() < 4) {
+        ctx.font = '600 10px "IBM Plex Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(6,10,14,.85)';
+        ctx.strokeText(f.properties.name, ax, ay - 6);
+        ctx.fillStyle = '#ffd7ee';
+        ctx.fillText(f.properties.name, ax, ay - 6);
+        ctx.textAlign = 'left';
       }
     }
     ctx.restore();

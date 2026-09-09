@@ -73,3 +73,50 @@ export function formatDistance(m) {
   if (m >= 1) return `${m.toFixed(m >= 100 ? 0 : 1)} m`;
   return `${(m * 100).toFixed(0)} cm`;
 }
+
+/// Degrees and decimal minutes as a plotter shows them -- N5125.2300 -- or
+/// plain decimal degrees.
+///
+/// Four or more digits before the point means the last two of them are minutes,
+/// which is what makes 00309.3400 read as 3 degrees 09.34 minutes while 51.4205
+/// still reads as 51.4205 degrees.
+export function parseCoord(raw, isLat) {
+  let s = String(raw ?? '').trim().toUpperCase();
+  if (!s) return NaN;
+  let sign = 1;
+  const hem = s.match(/[NSEW]/);
+  if (hem) {
+    if (hem[0] === 'S' || hem[0] === 'W') sign = -1;
+    // N or S in a longitude field is a typo, not a position.
+    if ((hem[0] === 'N' || hem[0] === 'S') !== !!isLat) return NaN;
+    s = s.replace(/[NSEW]/g, ' ').trim();
+  }
+  if (s.startsWith('-')) { sign = -sign; s = s.slice(1).trim(); }
+  const parts = s.split(/[\s°'′"″:]+/).filter(Boolean);
+  if (!parts.length || parts.some(p => !/^\d+(\.\d+)?$/.test(p))) return NaN;
+  let deg;
+  if (parts.length >= 2) {
+    if (+parts[1] >= 60 || (parts[2] && +parts[2] >= 60)) return NaN;
+    deg = +parts[0] + +parts[1] / 60 + (parts[2] ? +parts[2] / 3600 : 0);
+  } else {
+    const [ip, fp = ''] = parts[0].split('.');
+    if (ip.length >= 4) {
+      const m = +(ip.slice(-2) + (fp ? '.' + fp : ''));
+      if (m >= 60) return NaN;
+      deg = +ip.slice(0, -2) + m / 60;
+    } else {
+      deg = +parts[0];
+    }
+  }
+  deg *= sign;
+  return Math.abs(deg) > (isLat ? 90 : 180) ? NaN : deg;
+}
+
+/// The inverse, in the form a bridge reads.
+export function ddm(v, ns) {
+  if (!Number.isFinite(v)) return '';
+  const h = v < 0 ? ns[1] : ns[0], a = Math.abs(v);
+  const d = Math.floor(a), m = (a - d) * 60;
+  return `${h}${String(d).padStart(ns[0] === 'N' ? 2 : 3, '0')}${m.toFixed(4).padStart(7, '0')}`;
+}
+

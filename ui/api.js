@@ -81,6 +81,13 @@ export const api = {
   // tab to open, so the file is the deliverable and the open is a courtesy.
   openReport:   ()             => req('POST', '/api/report/open'),
 
+  // The plan lives on the project, so these carry no state of their own: the
+  // server already knows which contacts the search is for.
+  plan:         ()             => req('GET', '/api/plan'),
+  savePlan:     (p)            => req('POST', '/api/plan', p),
+  solvePlan:    (az)           => req('GET', `/api/plan/solve?az=${az}`),
+  exportPlan:   (o)            => req('POST', '/api/plan/export', o),
+
   contacts:     ()             => req('GET', '/api/contacts'),
   saveContact:  (c)            => req('POST', '/api/contacts', c),
   deleteContact:(id)           => req('DELETE', `/api/contacts/${encodeURIComponent(id)}`),

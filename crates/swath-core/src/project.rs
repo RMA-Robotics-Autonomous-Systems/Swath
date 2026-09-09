@@ -237,6 +237,53 @@ pub struct Project {
     /// Free-form per-dataset UI state the viewer wants to remember.
     #[serde(default)]
     pub view: BTreeMap<String, serde_json::Value>,
+    /// The search plan: how the sonar and the boat are set up, and which
+    /// contacts the lines are for.
+    #[serde(default)]
+    pub plan: PlanState,
+}
+
+/// A project's search plan.
+///
+/// The targets are contacts rather than a list of their own, because a position
+/// worth searching for and a position worth reporting are the same kind of
+/// thing -- and what you go looking for today is what you mark tomorrow.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PlanState {
+    #[serde(default)]
+    pub spec: crate::plan::PlanSpec,
+    /// Contact ids this search is for.
+    ///
+    /// `None` -- a project that has never been planned -- means every datum,
+    /// which is what an operator who has just typed a few positions in would
+    /// expect to see. Once the planner has been opened it always writes an
+    /// explicit list, so `Some([])` means "nothing ticked" rather than
+    /// "fall back to the datums", and unticking the last target does not make
+    /// the datums quietly reappear.
+    #[serde(default)]
+    pub targets: Option<Vec<String>>,
+}
+
+impl PlanState {
+    /// The contacts this plan is for, as targets.
+    pub fn targets_from(&self, contacts: &[Contact]) -> Vec<crate::plan::Target> {
+        let pick: Vec<&Contact> = match &self.targets {
+            None => contacts.iter().filter(|c| c.source == Source::Datum).collect(),
+            Some(ids) => ids.iter().filter_map(|id| contacts.iter().find(|c| &c.id == id)).collect(),
+        };
+        pick.into_iter()
+            .map(|c| crate::plan::Target {
+                id: c.id.clone(),
+                name: if c.name.is_empty() { c.id.clone() } else { c.name.clone() },
+                lat: c.lat,
+                lon: c.lon,
+                // A contact with no radius is a point, and a point still has to
+                // be found: fall back to something a search can be built around
+                // rather than planning for a mathematical dot.
+                radius_m: if c.radius_m > 0.0 { c.radius_m } else { 50.0 },
+            })
+            .collect()
+    }
 }
 
 /// One layer on one chart.
@@ -326,6 +373,7 @@ impl Project {
             layers: Vec::new(),
             report: ReportSpec::default(),
             view: BTreeMap::new(),
+            plan: PlanState::default(),
         }
     }
 
@@ -388,6 +436,11 @@ pub enum Source {
     #[default]
     Map,
     Waterfall,
+    /// A position that was given to us rather than found: a client's datum, a
+    /// previous survey's report, a position off the bridge. It is not a mark on
+    /// any imagery, so re-solving the navigation must not move it -- and it is
+    /// the thing a search plan is built to go and look at.
+    Datum,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

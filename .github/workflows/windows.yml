@@ -1,0 +1,104 @@
+# The Windows build: one swath.exe and nothing to install beside it.
+#
+# There is no packaging step here because there is nothing to package. The
+# frontend is compiled into the binary by swath-core's build script and the
+# dependency graph is pure Rust down to the TLS roots, so `cargo build` already
+# produces the whole application. Everything else in this file is about proving
+# that stays true -- an executable that quietly grows a dependency on a folder
+# beside it, or on a redistributable, fails on somebody's laptop and not here.
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Link the CRT statically. Without this the executable wants vcruntime140.dll,
+  # which is not on a clean Windows install -- and needing a redistributable is
+  # being an install again. Set for the job rather than the step so the test and
+  # the build share one set of compiled artifacts.
+  #
+  # Every cargo call below names --target for this reason even though the host
+  # is already that triple: it is what makes cargo build proc macros as host
+  # units, which RUSTFLAGS is then not applied to. Drop the flag and the build
+  # fails on serde_derive, because a proc macro is a dylib and a dylib cannot
+  # be linked against a static CRT.
+  RUSTFLAGS: -C target-feature=+crt-static
+
+jobs:
+  exe:
+    name: swath.exe (x86_64)
+    runs-on: windows-latest
+    permissions:
+      contents: write # only reached by the tagged-release step
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+
+      # Worth more here than the build is. This is the first time the code runs
+      # on Windows at all, and the suite is where separators, line endings and
+      # the directory-symlink branch of project.rs actually get exercised.
+      #
+      # swath-app is not in the default members, so this is the library and the
+      # command and no webview.
+      - name: cargo test
+        run: cargo test --target x86_64-pc-windows-msvc
+
+      - name: cargo build
+        run: cargo build --release -p swath-cli --target x86_64-pc-windows-msvc
+
+      # The claim, tested: copy the executable somewhere with nothing beside it,
+      # start it, and ask it for the frontend. A `ui/` left in the checkout is
+      # exactly what would hide the mistake this is looking for.
+      - name: it runs on its own
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "lonely"
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/swath.exe $dir
+          $exe = Join-Path $dir "swath.exe"
+          "{0:N1} MB" -f ((Get-Item $exe).Length / 1MB)
+
+          $p = Start-Process -FilePath $exe -ArgumentList "serve","--port","8791" -PassThru
+          try {
+            $home_page = $null
+            foreach ($i in 1..40) {
+              try { $home_page = Invoke-WebRequest http://127.0.0.1:8791/ -UseBasicParsing; break }
+              catch { Start-Sleep -Milliseconds 250 }
+            }
+            if (-not $home_page) { throw "the server never answered" }
+            if ($home_page.Content -notmatch "<title>swath</title>") { throw "answered, but not with the viewer" }
+            $app = Invoke-WebRequest http://127.0.0.1:8791/app.js -UseBasicParsing
+            if ($app.Content.Length -lt 1000) { throw "app.js came back too small to be app.js" }
+            "served index.html and app.js from inside the executable"
+          } finally {
+            Stop-Process -Id $p.Id -Force
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swath-windows-x86_64
+          path: target/x86_64-pc-windows-msvc/release/swath.exe
+          if-no-files-found: error
+
+      # On a tag, the same file becomes the download on the release page. The
+      # release may or may not exist yet -- a tag pushed on its own has none,
+      # one cut in the web UI does -- so create it if it is missing and upload
+      # either way.
+      - name: attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --generate-notes --title "swath $GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" \
+            target/x86_64-pc-windows-msvc/release/swath.exe --clobber
