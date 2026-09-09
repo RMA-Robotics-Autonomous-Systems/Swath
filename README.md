@@ -26,9 +26,14 @@ is the draw order, top first.*
 cargo build --release        # the library and the `swath` command
 ```
 
-That is everything for the browser version. The desktop shell additionally
-links webkit2gtk; where those `-dev` packages cannot be installed system-wide,
-`scripts/build-env.sh` points the build at a user-owned sysroot:
+That is the whole browser version, and it needs nothing outside the crates.io
+graph — no GDAL, no PROJ, no system library at all.
+
+The desktop shell is deliberately **not** in that build. It links webkit2gtk,
+which cannot be installed everywhere, and discovering that on the first command
+in a README is a poor introduction — so it is opt-in. Where the `-dev` packages
+cannot go in system-wide, `scripts/build-env.sh` points the build at a
+user-owned sysroot:
 
 ```sh
 source scripts/build-env.sh

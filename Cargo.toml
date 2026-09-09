@@ -2,6 +2,13 @@
 resolver = "2"
 members = ["crates/swath-core", "crates/swath-cli", "crates/swath-app"]
 
+# `cargo build` builds the library and the `swath` command, and nothing that
+# needs a system library. The desktop shell links webkit2gtk, which is not
+# installable everywhere and is a poor thing to discover on the first command
+# in the README -- so it is opt-in, with `-p swath-app`. CI passes --workspace
+# and still builds it.
+default-members = ["crates/swath-core", "crates/swath-cli"]
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
